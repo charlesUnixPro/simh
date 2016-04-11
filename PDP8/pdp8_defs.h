@@ -85,7 +85,7 @@
 
 /* Device information block */
 
-#define DEV_MAXBLK      8                               /* max dev block */
+#define DEV_MAXBLK      031                             /* max dev block */
 #define DEV_MAX         64                              /* total devices */
 
 typedef struct {
@@ -100,6 +100,8 @@ typedef struct {
 #define DEV_PTP         002                             /* paper tape punch */
 #define DEV_TTI         003                             /* console input */
 #define DEV_TTO         004                             /* console output */
+#define DEV_D8          000                             /* 335 vector display, devices at */
+                                                        /* 005, 006, 007, 013, 014, 015, 016, 017, 030 */
 #define DEV_CLK         013                             /* clock */
 #define DEV_TSC         036
 #define DEV_KJ8         040                             /* extra terminals */

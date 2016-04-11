@@ -86,7 +86,7 @@ DEVICE clk_dev = {
     1, 0, 0, 0, 0, 0,
     NULL, NULL, &clk_reset,
     NULL, NULL, NULL,
-    &clk_dib, 0
+    &clk_dib, DEV_DISABLE | DEV_DIS
     };
 
 /* IOT routine
