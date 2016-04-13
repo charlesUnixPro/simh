@@ -343,6 +343,8 @@ while (reason == 0) {                                   /* loop until halted */
             break;
         }
 
+    sim_instr_d8 ();                                    /* Step the display controller */
+
     if (int_req > INT_PENDING) {                        /* interrupt? */
         int_req = int_req & ~INT_ION;                   /* interrupts off */
         SF = (UF << 6) | (IF >> 9) | (DF >> 12);        /* form save field */

@@ -154,7 +154,8 @@ typedef struct {
 #define INT_V_TTI2      (INT_V_START+11)                /* tti2 */
 #define INT_V_TTI3      (INT_V_START+12)                /* tti3 */
 #define INT_V_TTI4      (INT_V_START+13)                /* tti4 */
-#define INT_V_DIRECT    (INT_V_START+14)                /* direct start */
+#define INT_V_D8        (INT_V_START+14)                /* d8 */
+#define INT_V_DIRECT    (INT_V_START+15)                /* direct start */
 #define INT_V_RX        (INT_V_DIRECT+0)                /* RX8E */
 #define INT_V_RK        (INT_V_DIRECT+1)                /* RK8E */
 #define INT_V_RF        (INT_V_DIRECT+2)                /* RF08 */
@@ -186,6 +187,7 @@ typedef struct {
 #define INT_TTI2        (1 << INT_V_TTI2)
 #define INT_TTI3        (1 << INT_V_TTI3)
 #define INT_TTI4        (1 << INT_V_TTI4)
+#define INT_D8          (1 << INT_V_D8)
 #define INT_RX          (1 << INT_V_RX)
 #define INT_RK          (1 << INT_V_RK)
 #define INT_RF          (1 << INT_V_RF)
@@ -213,6 +215,8 @@ typedef struct {
 
 t_stat set_dev (UNIT *uptr, int32 val, char *cptr, void *desc);
 t_stat show_dev (FILE *st, UNIT *uptr, int32 val, void *desc);
+
+void sim_instr_d8 (void);
 
 void cpu_set_bootpc (int32 pc);
 

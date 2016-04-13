@@ -23,15 +23,20 @@
    used in advertising or otherwise to promote the sale, use or other dealings
    in this Software without prior written authorization from Robert M Supnik.
 
-   lpt          LP8E line printer
+   d8          338 Graphics display
 
-   19-Jan-07    RMS     Added UNIT_TEXT
-   25-Apr-03    RMS     Revised for extended file support
-   04-Oct-02    RMS     Added DIB, enable/disable, device number support
-   30-May-02    RMS     Widened POS to 32b
 */
 
 #include "pdp8_defs.h"
+
+typedef uint16 word1;
+typedef uint16 word2;
+typedef uint16 word3;
+typedef uint16 word6;
+typedef uint16 word7;
+typedef uint16 word10;
+typedef uint16 word12;
+typedef uint16 word13;
 
 extern int32 int_req, int_enable, dev_done, stop_inst;
 
@@ -44,28 +49,81 @@ int32 d8_stopioe = 0;                                  /* stop on error */
 
 /* Status registers */
 
-static uint16 pushDownPtr; /* 12 bits */
-static uint16 xPosition; /* 13 bits */
-static uint16 yPosition; /* 13 bits */
-static uint16 displayAddressCounter; /* 12 bits */
-static uint8  lightPenHitFlag; /* 1 bit */
-static uint8  verticalEdgeFlag; /* 1 bit */
-static uint8  horizontalEdgeFlag; /* 1 bit */
-static uint8  internalStopFlag; /* 1 bit */
-static uint8  sector0Flag; /* 1 bit */
-static uint8  controlStateFlag; /* 1 bit; 0: data state, 1: control state */
-static uint8  manualInterruptFlag; /* 1 bit */
-static uint8  pushButtonHitFlag; /* 1 bit */
-static uint8  displayInterruptFlag; /* 1 bit */
-static uint8  breakField; /* 3 bits */
-static uint8  byteFlipFlop; /* 1 bit */
-static uint8  lightPenEnable; /* 1 bit */
-static uint16 lightPenScale; /* 2 bits */
-static uint16 lightPenMode; /* 3 bits */
-static uint16 lightPenIntensity; /* 3 bits */
-static uint16 pushButtons; /* 12 bits */
-static uint16 slaveGroup1; /* 12 bits */
-static uint16 slaveGroup2; /* 12 bits */
+// 2.3.1.5 Read Status 1: "Display interrupt flag. If the interrupt
+// system is turned on and bit is a 1, the computer will interrupt.
+// It is set by one of the six display flags being on and gated onto
+// the interrupt line.
+// 2.3.2.2 Set Initial Conditions:
+//   Enable edge flag interrupt
+//   Enable light pen flag interrupt
+//   Enable interrupt on push button hit
+//   Enable interrupt on internal stop flag
+//
+// That's 4 (or 5 if you count 'edge' has both H and V).
+//
+// Looking at the example interrupt handler in App. 2:
+//
+//  SPLP light pen flag
+//  SPSF internal stop flag
+//  SPMI manual interrupt
+//  SPEF edge flag
+//  SPES external stop flag
+//  SPSP slave light pen
+//  RS1 and then test for pushbutton flag.
+//
+// That's 7. Sigh.
+//
+// 1.1.9 Flags
+//
+//  Internal stop
+//  External stop
+//  Edge
+//  Light pen
+//  Pushbutton
+//  Manual interrupt
+//
+// Okay, that's 6; the optional slave light pen is the 7th
+// Manual interrupt and push button do not stop the display; the
+// others do.
+//
+
+// The interrupt causing flags
+static word1  internalStopFlag;
+static word1  externalStopFlag;
+static word1  verticalEdgeFlag;
+static word1  horizontalEdgeFlag;
+static word1  lightPenHitFlag;
+static word1  pushButtonHitFlag;
+static word1  manualInterruptFlag;
+
+// Interrupt pending
+static word1  displayInterruptFlag;
+
+// Interrupt enables
+static word1  enableEdgeFlagInterrupt;
+static word1  enableLightPenFlagInterrupt;
+static word1  enablePushButtonHitInterrupt;
+static word1  enableInternalStopInterrupt;
+
+// Non-interrupt causing flags
+static word1  sector0Flag;
+
+// General registers
+static word1  lightPenEnable;
+static word12 pushDownPtr;
+static word13 xPosition;
+static word13 yPosition;
+static word12 displayAddressCounter; // Plus breakField for 15 bits 
+static word1  controlStateFlag; /* 0: data state, 1: control state */
+static word3  breakField;
+static word1  byteFlipFlop;
+static word2  scale;
+static word3  mode;
+static word3  intensity;
+static word1  blink;
+static word12 pushButtons;
+static word12 slaveGroup1;
+static word12 slaveGroup2;
 
 // Status register 1 bit fields
 #define SR1_LPHF   04000  // Light pen hit
@@ -84,18 +142,18 @@ static uint16 slaveGroup2; /* 12 bits */
 #define SR2_LPE    02000  // Light pen enable
 #define SR2_HOXP   01000  // High order x position register bit
 #define SR2_HOYP   00400  // High order y position register bit
-#define SR2_LPSCL  00300  // Scale
-#define SR2_LPSCL_SHIFT 6
-#define SR2_LPMODE 00070  // Mode
-#define SR2_LPMODE_SHIFT 3
-#define SR2_LPINT  00007  // Light pen intensity
+#define SR2_SCL    00300  // Scale
+#define SR2_SCL_SHIFT 6
+#define SR2_MODE   00070  // Mode
+#define SR2_MODE_SHIFT 3
+#define SR2_INT    00007  // Intensity
 
 /* Character generator status */
-static uint8  cgActive; /* 1 bit */
-static uint8  cgCharacterByte; /* 1 bit */
-static uint8  cgCase; /* 1 bit */
-static uint8  cgCodeSize; /* 1 bit */
-static uint16 cgStartingAddressRegister; /* 6 bits */
+static word1 cgActive;
+static word1 cgCharacterByte;
+static word1 cgCase;
+static word1 cgCodeSize;
+static word6 cgStartingAddressRegister;
 
 #define CG_ACT  04000
 #define CG_CB   02000
@@ -107,13 +165,67 @@ static uint16 cgStartingAddressRegister; /* 6 bits */
 
 /* State registers */
 
-static uint8  enableEdgeFlagInterrupt; /* 1 bit */
-static uint8  enableLightPenFlagInterrupt; /* 1 bit */
-static uint8  enablePushButtonHitInterrupt; /* 1 bit */
-static uint8  enableInternalStopInterrupt; /* 1 bit */
+static word1  disableLightPenOnResume;
+static word1  lightPenBehavior;
+static word2  xDimension;
+static word2  yDimension;
+static word1  intensifyAllPoints;
+static word1  inhibitEdgeFlags;
+static word1  breakRequestFlag; /* This is the run/stop bit */
 
 #define SIC_EFI  04000 /* Enable edge flag interrupt */
 #define SIC_ELPI 02000 /* Enable light pen interrupt */
+#define SIC_DLPR 01000 /* Disable light pen on resume */
+#define SIC_LPB  00400 /* Light pen behavior */
+#define SIC_YDIM 00300 /* Y dimension */
+#define SIC_YDIM_SHIFT 6
+#define SIC_XDIM 00060 /* X dimension */
+#define SIC_XDIM_SHIFT 4
+#define SIC_IAP  00010 /* Intensify all points */
+#define SIC_IEF  00004 /* Inhibit edge flags */
+#define SIC_EPBI 00002 /* Enable interrupt on push button hit */
+#define SIC_EISI 00001 /* Enable interrupt on internal stop */
+
+#define LBF_BFE  04000 /* Break field change enable */
+#define LBF_BF   03400 /* Break field */
+#define LBF_BF_SHIFT 8
+#define LBF_PBE  00200 /* Push button change enable */
+#define LBF_WPB  00100 /* Which push buttons */
+#define LBF_PBS  00077 /* Push buttons */
+
+#define SCG_CASE 00400 /* Case select */
+#define SCG_CHSZ 00200 /* Code size */
+#define SCG_SAR  00077 /* Starting address register */
+
+/* D8 State engine */
+
+// G Bell: Computer Structures: Readings and Examples, Chap. 25
+
+static word1 signalExternalStop;
+
+enum d8_state {
+  // Control state
+  instructionState,
+  midFetch,
+  instructionFetchComplete,
+  midPush,
+  midPop, // This isn't in the documented state diagram, but is
+          // need to account for cycle stealing.
+  internalStop,
+  // externalStopControl, // implemented as breakRequestFlag.
+  // Data state
+  dataState,
+  midDataFetch,
+  dataFetchComplete,
+  dataExecutionWait,
+  //externalStopData // implemented as breakRequestFlag.
+};
+
+static enum d8_state state;
+/* sub-state flags */
+static word12 instrBuf;
+static word12 instrBuf2;
+static word12 popbuf;
 
 int32 d8_05 (int32 IR, int32 AC);
 int32 d8_06 (int32 IR, int32 AC);
@@ -200,9 +312,29 @@ t_stat d8_svc (UNIT *uptr)
 return SCPE_OK;
 }
 
-/* IOT routine */
+static void updateInterrupt (void)
+  {
+    if ((internalStopFlag   && enableInternalStopInterrupt)  ||
+        externalStopFlag                                     ||
+        (verticalEdgeFlag   && enableEdgeFlagInterrupt)      ||
+        (horizontalEdgeFlag && enableEdgeFlagInterrupt)      ||
+        (lightPenHitFlag    && enableLightPenFlagInterrupt)  ||
+        (pushButtonHitFlag  && enablePushButtonHitInterrupt) ||
+        manualInterruptFlag)
+      {
+        displayInterruptFlag = 1;
+        int_enable = int_enable | INT_LPT; // set enable 
+        int_req = INT_D8 | INT_UPDATE; // update interrupts 
+      }
+    else
+      {
+        displayInterruptFlag = 0;
+        dev_done = dev_done | INT_D8; // set flag
+        int_req = INT_UPDATE; // update interrupts
+      }
+  }
 
-/* 2.3.1 Group 1. From the display */
+/* IOT routines */
 
 int32 d8_05 (int32 IR, int32 AC)
 {
@@ -239,7 +371,8 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         // The contents of the display address counter are transferred
         // from the display to the AC. The DAC will be set at the next
         // command to be executed by the display XXX ???
-        return displayAddressCounter;
+        AC = displayAddressCounter;
+        break;
 
     case 2:                                             /* RS1 */
         // RS1 6062 Read Status 1
@@ -255,14 +388,14 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         //  6     Manual interrupt flag.
         //  7     Push-button hit flag.
         //  8     Display interrupt flag. If the intrrupt system is turned on
-        //        bit is a 1, the computer will interrupy. It is set by one
+        //        bit is a 1, the computer will interrupt. It is set by one
         //        of the six display flags being on and gated onto the
         //        interrupt line.
         //  9, 10, 11
         //        Contents of break field register. These three bits and the
         //        12 bits from the RDAC instruction gice the full 15-bit 
         //        memory address.
-        return
+        AC =
           (lightPenHitFlag      ? SR1_LPHF : 0) |
           (verticalEdgeFlag     ? SR1_VEF  : 0) |
           (horizontalEdgeFlag   ? SR1_HEF  : 0) |
@@ -273,6 +406,13 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
           (pushButtonHitFlag    ? SR1_PBHF : 0) |
           (displayInterruptFlag ? SR1_DIF  : 0) |
           (breakField & SR1_BFR);
+        pushButtonHitFlag = 0;
+        // XXX this is assuming only a single interrupt event
+        // XXX is outstanding? does it need to set dev_done
+        // XXX if all of the flags are 0?
+        dev_done = dev_done | INT_D8; // set flag
+        int_req = INT_UPDATE; // update interrupts
+        break;
 
     case 4:                                             /* RS2 */
         // RS2 6064 Read Status 2
@@ -286,13 +426,13 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         // is obtained from the RCG (IOT 304) instruction. The low twelve
         // bits of the 13-bit x and y position register are obtained by giving
         // RXP or RYP.
-        return
+        AC =
           (byteFlipFlop         ? SR2_BFF  : 0) |
           (lightPenEnable       ? SR2_LPE  : 0) |
-          ((lightPenScale << SR2_LPSCL_SHIFT) & SR2_LPSCL) |
-          ((lightPenMode << SR2_LPMODE_SHIFT) & SR2_LPMODE) |
-          (lightPenIntensity & SR2_LPINT);
-
+          ((scale << SR2_SCL_SHIFT) & SR2_SCL) |
+          ((mode << SR2_MODE_SHIFT) & SR2_MODE) |
+          (intensity & SR2_INT);
+        break;
     }
 return AC;
 }
@@ -331,9 +471,202 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
 return AC;
 }
 
+int32 d8_13 (int32 IR, int32 AC)
+{
+switch (IR & 07) {                                      /* decode IR<9:11> */
+
+    case 2:                                             /* SLPP */
+        // SLPP 6132 Skip on Light Pen Hit Flag
+        return lightPenHitFlag ? IOT_SKP + AC: AC;
+
+    case 5:                                             /* SPDP */
+        // SPDP 6135 Set the Push Down Pointer
+        // The contents of the AC are transferred into the PDP register.
+        // Since the PDP is a 12-bit register, the PDP list must reside
+        // in the first 4K of memory.
+        pushDownPtr = AC & 07777;
+        return AC;
+    }
+return AC;
+}
+
+int32 d8_14 (int32 IR, int32 AC)
+{
+switch (IR & 07) {                                      /* decode IR<9:11> */
+
+    case 2:                                             /* SLPP */
+        // SPSP 6142 Skip on Slave Light Pen Hit Flag
+        return ((slaveGroup1 & 0111) | (slaveGroup2 & 0111)) ? IOT_SKP + AC: AC;
+
+    case 5:                                             /* SIC */
+        // SIC 6145 Set Initial Conditions
+        // Set interrupt enable flags, paper size and light pen conditions.
+        enableEdgeFlagInterrupt = (AC & SIC_EFI) ? 1 : 0;
+        enableLightPenFlagInterrupt = (AC & SIC_ELPI) ? 1 : 0;
+        disableLightPenOnResume = (AC & SIC_DLPR) ? 1 : 0;
+        lightPenBehavior = (AC & SIC_LPB) ? 1 : 0;
+        yDimension = (AC >> SIC_YDIM_SHIFT) & 03;
+        xDimension = (AC >> SIC_XDIM_SHIFT) & 03;
+        intensifyAllPoints = (AC & SIC_IAP) ? 1 : 0;
+        inhibitEdgeFlags = (AC & SIC_IEF) ? 1 : 0;
+        enablePushButtonHitInterrupt = (AC & SIC_EPBI) ? 1 : 0;
+        enableInternalStopInterrupt = (AC & SIC_EISI) ? 1 : 0;
+        updateInterrupt ();
+        //if (enableEdgeFlagInterrupt || enableLightPenFlagInterrupt || enablePushButtonHitInterrupt || enableInternalStopInterrupt)
+          //int_enable = int_enable | INT_D8;
+        //else
+          //int_enable = int_enable & ~ INT_D8;
+        //int_req = INT_UPDATE;                           /* update interrupts */
+
+        return AC;
+    }
+return AC;
+}
+
+int32 d8_15 (int32 IR, int32 AC)
+{
+switch (IR & 07) {                                      /* decode IR<9:11> */
+
+    case 1:                                             /* SPES */
+        // SPES 6151 Skip on External Stop Flag
+        // This is one of the microprogrammed IOTs and requires bits 0 and 
+        // 4 of the AC to be 0 when the IOT is given.
+        if (AC & 04200)
+          return AC;
+        return externalStopFlag ? IOT_SKP + AC: AC;
+
+    case 2:                                             /* SPEF */
+        // SPEF 6152 Skip on Edge Flag
+        return (verticalEdgeFlag | horizontalEdgeFlag) ? IOT_SKP + AC: AC;
+
+    case 4:                                             /* STPD */
+        // STPD 6154 Stop Display (External)
+        // STPD stops the display and sets the external stop flag when
+        // the display has stopped. This is one of the microprogrammed
+        // IOTs and requires bits 0 and 4 of the AC to be 0 when the IOT
+        // is given.
+        if (AC & 04200)
+          return AC;
+        signalExternalStop = 1;
+        return AC;
+        
+    case 5:                                             /* SIC */
+        // LBF 6155 Load Break field
+        if (AC & LBF_BFE) { // Is change break field set?
+            breakField = (AC >> LBF_BF_SHIFT) & 07;
+        }
+        if (AC & LBF_PBE) { // Is change push buttons set?
+            word6 tmp = AC & LBF_PBS;
+            if (AC & LBF_WPB) { // High half or low?
+                // High half
+                pushButtons &= 00077; // Clear high half
+                pushButtons |= tmp << 6; // Set high half
+                } else {
+                // Low half
+                pushButtons &= 07700; // Clear low half
+                pushButtons |= tmp; // Set low half
+                }
+            }
+        return AC;
+    }
+
+return AC;
+}
+
+int32 d8_16 (int32 IR, int32 AC)
+{
+switch (IR & 07) {                                      /* decode IR<9:11> */
+
+    case 1:                                             /* CFD */
+        // CFD 6161 Clear Display Flags
+        // CFD clears the four flags that stop the display. ... (internal
+        // and external stop, light pen hit, and edge)
+        internalStopFlag = 0;
+        externalStopFlag = 0;
+        lightPenHitFlag = 0;
+        verticalEdgeFlag = 0;
+        horizontalEdgeFlag = 0;
+        updateInterrupt ();
+        // XXX blink reset seems undocumented, but this should be a reasonable
+        // place...
+        blink = 0;
+        return AC;
+
+    case 4:                                             /* RES2 */
+        // RES2 6164 Resume After Stop Code
+        if (AC)
+            return AC; // "The AC must be zero before RES2 is given
+        breakRequestFlag = 1; // Start the display
+        // XXX this is assuming only a single interrupt event
+        // XXX is outstanding? does it need to set dev_done
+        // XXX if all of the flags are 0?
+        dev_done = dev_done | INT_D8; // set flag
+        int_req = INT_UPDATE; // update interrupts
+        return AC;
+
+    case 5:                                             /* INIT */
+        // INIT 6165 Initialize the display
+        displayAddressCounter = AC & 07777;
+        breakRequestFlag = 1; // Start the display
+        return AC;
+    }
+
+return AC;
+}
+
+int32 d8_17 (int32 IR, int32 AC)
+{
+switch (IR & 07) {                                      /* decode IR<9:11> */
+
+    case 1:                                             /* SPES */
+        // SPSF 6171 Skip on Internal Stop Flag
+        return internalStopFlag ? IOT_SKP + AC: AC;
+
+
+    case 2:                                             /* SPMI */
+        // SPMI 6172 Skip on Manual Interrupt
+        if (manualInterruptFlag)
+          AC |= IOT_SKP;
+        manualInterruptFlag = 0;
+        // XXX this is assuming only a single interrupt event
+        // XXX is outstanding? does it need to set dev_done
+        // XXX if all of the flags are 0?
+        dev_done = dev_done | INT_D8; // set flag
+        int_req = INT_UPDATE; // update interrupts
+        break;
+
+    case 5:                                             /* RES1 */
+        // RES1 6174 Resume After Light Pen Hit, Edge, or External Stop Flag
+        if (lightPenHitFlag || verticalEdgeFlag || horizontalEdgeFlag ||
+          externalStopFlag) {
+            lightPenHitFlag = 0;
+            verticalEdgeFlag = 0;
+            horizontalEdgeFlag = 0;
+            externalStopFlag= 0;
+            breakRequestFlag = 1; // Start the display
+            updateInterrupt ();
+            // // XXX this is assuming only a single interrupt event
+            // // XXX is outstanding? does it need to set dev_done
+            // // XXX if all of the flags are 0?
+            // dev_done = dev_done | INT_D8; // set flag
+            // int_req = INT_UPDATE; // update interrupts
+        }
+        break;
+    }
+return AC;
+}
+
 int32 d8_30 (int32 IR, int32 AC)
 {
 switch (IR & 07) {                                      /* decode IR<9:11> */
+
+
+    case 3:                                             /* SCG */
+        // SCG 6303 Set Character Generator
+        cgCase = (AC & SCG_CASE) ? 1 : 0;
+        cgCodeSize = (AC & SCG_CHSZ) ? 1 : 0;
+        cgStartingAddressRegister = AC & SCG_SAR;
+        return AC;
 
     case 4:                                             /* RCG */
         // RCG 6304 Read Character Generator
@@ -350,47 +683,35 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
 return AC;
 }
 
-/* 2.3.2 Group 2. To the display */
-
-int32 d8_13 (int32 IR, int32 AC)
-{
-switch (IR & 07) {                                      /* decode IR<9:11> */
-
-    case 5:                                             /* SPDP */
-        // SPDP 6135 Set the Push Down Pointer
-        // The contents of the AC are transferred into the PDP register.
-        // Since the PDP is a 12-bit register, the PDP list must reside
-        // in the first 4K of memory.
-        pushDownPtr = AC & 07777;
-        return AC;
-    }
-return AC;
-}
-
-int32 d8_14 (int32 IR, int32 AC)
-{
-return AC;
-}
-
-int32 d8_15 (int32 IR, int32 AC)
-{
-return AC;
-}
-
-int32 d8_16 (int32 IR, int32 AC)
-{
-return AC;
-}
-
-int32 d8_17 (int32 IR, int32 AC)
-{
-return AC;
-}
-
 /* Reset routine */
 
 t_stat d8_reset (DEVICE *dptr)
 {
+// 2.3.2.8 "The power clear pulse (START key) also clears all display flags.
+// All display flags cat be cleared by giving three IOTs: CFD-6161 (internal
+// and external stop, light pen high, and edge); RS1-6062 (push button); and 
+// SPMI-6172 (manual interrupt).
+// CFD
+internalStopFlag = 0;
+externalStopFlag = 0;
+lightPenHitFlag = 0;
+verticalEdgeFlag = 0;
+horizontalEdgeFlag = 0;
+// RS1-6062 makes no sense
+pushButtons = 0;
+// SPMI-6172 makes no sense
+manualInterruptFlag = 0;
+
+state = instructionState;
+controlStateFlag = 1;
+signalExternalStop = 0;
+
+blink = 0;
+
+dev_done = dev_done & ~INT_D8;                          /* clear done, int */
+int_req = int_req & ~INT_D8;
+int_enable = int_enable | INT_D8;
+
 return SCPE_OK;
 }
 
@@ -492,3 +813,571 @@ lpt_err = 1;
 return detach_unit (uptr);
 }
 #endif
+
+// Step the display processor
+
+#define sdgb 
+
+extern uint16 M[];
+
+static word12 dacwas; // debugging
+
+void sim_instr_d8 (void)
+  {
+    if (! breakRequestFlag)
+      return;  // Not running.
+
+    switch (state)
+      {
+        case instructionState:
+          {
+
+            if (signalExternalStop)
+              {
+                signalExternalStop = 0;
+                externalStopFlag = 1;
+                breakRequestFlag = 0; // Stop the display
+                updateInterrupt ();
+                break;
+              }
+
+// Get the instruction
+
+// This involves a 'data break'; cycle stealing on the bus.
+// Ignore the timing implications of this for the nonce.
+// XXX (Decrement sim_interval?) Each access to 'M' should count as
+// XXX a break cycle
+// 1.1.10 The display can take at most 1 data break every 3 cycles.
+// 4.5 usec.
+
+// F-85, pg 4: MAJOR STATE GENERATOR
+// Fetch, Defer (indirect address fetch), Execute, Word Count 
+// (3-cycle break first step), Current Address (3-cycle break
+// second step),  Break (3-cycle break last step or 1-cycle 
+// break).
+
+// It seems like the 1.1.10 1 in 3 rule is based on the 338 clock;
+// it runs at a speed that effectively a break cycle at half the
+// Major State Generator clock, or the MSG is gating the break
+// cycle to prevent CPU starvation.
+
+// Since sim_instr doesn't implement the MSG explicitly, it is
+// running sim_instr_d8 once per instruction execution, so
+// the effective sequence is:
+//
+//   Fetch, Execute, Break, Fetch, Execute, Break,...
+//
+// which appears to be a resonable facsimile of the H/W.
+
+            dacwas = displayAddressCounter; // debugging
+            instrBuf = M[displayAddressCounter | (breakField << 12)];
+            displayAddressCounter = (displayAddressCounter + 1) & 07777;
+
+            word3 opc = (instrBuf >> 9) & 07;
+            if (opc == 02) // Jump/Push Jump
+                 state = midFetch; 
+            else
+                 state = instructionFetchComplete; 
+            break;
+          } // case instructionState
+
+        case midFetch:
+          instrBuf2 = M[displayAddressCounter | (breakField << 12)];
+          displayAddressCounter = (displayAddressCounter + 1) & 07777;
+          state = instructionFetchComplete;
+          break;
+
+        case instructionFetchComplete:
+          {
+            state = instructionState; // Set default state transition
+
+            word3 opc = (instrBuf >> 9) & 07;
+            switch (opc)
+              {
+                case 0: // Parameter
+
+                  if (instrBuf & 00400) // Enable scale change
+                    scale = (instrBuf >> 6) & 03;
+                  if (instrBuf & 00040) // Enable light pen change
+                    lightPenEnable = (instrBuf >> 6) & 03;
+                  break;
+
+                case 1: // Mode
+
+// XXX This may be wrong; if both EDS (enter data state) and 
+// XXX STOP bits are set, one of them will get ignored.
+// XXX The docs are not at all clear about this.
+                  if ((instrBuf & 00400) && (instrBuf & 00001))
+                    sim_printf ("EDS and STOP at %04o?\n", dacwas);
+
+                  if (instrBuf & 00400) // Stop code
+                    {
+                      internalStopFlag = 1;
+                      updateInterrupt ();
+                      state = internalStop;
+                    }
+
+                  if (instrBuf & 00200) // Clear push button flag
+                    {
+                      pushButtonHitFlag = 0;
+                      manualInterruptFlag = 0;
+                    }
+
+                  if (instrBuf & 00100) // Enable mode change
+                    mode = (instrBuf >> 3) & 03;
+
+                  if (instrBuf & 00004) // Clear high order position bits
+                    {
+                      xPosition &= 001777;
+                      yPosition &= 001777;
+                    }
+
+                  if (instrBuf & 00002) // Clear low order position bits
+                    {
+                      xPosition &= 016000;
+                      yPosition &= 016000;
+                    }
+
+                  if (instrBuf & 00001) // Switch to data state
+                    {
+                      if (mode == 07)
+                        {
+                          internalStopFlag = 1;
+                          updateInterrupt ();
+                          state = internalStop;
+                        }
+                      else
+                        {
+                          state = dataState;
+                          controlStateFlag = 0;
+                        }
+                    }
+                  break;
+
+                case 2:  // Jump / Push Jump
+
+                  if (instrBuf & 00400) // Enable scale change
+                    scale = (instrBuf >> 6) & 03;
+                  if (instrBuf & 00040) // Enable light pen change
+                    lightPenEnable = (instrBuf >> 6) & 03;
+                  if (instrBuf & 00010) // Push Jump
+                    {
+                      // Save the first word, switch to midPush state
+                      word12 w = ((breakField & 03)     << 9) |
+                                 ((lightPenEnable & 01) << 8) |
+                                 ((scale & 03)          << 6) |
+                                 ((mode & 07)           << 3) |
+                                 ((intensity & 07)      << 0);
+                      // Pushdown list does not use break field
+                      M [pushDownPtr & 07777] = w;
+                      pushDownPtr = (pushDownPtr + 1) & 07777;
+                      state = midPush;
+                    }
+                  else  // Jump
+                    {
+                      breakField = instrBuf & 03;
+                      displayAddressCounter = instrBuf2 & 07777;
+                      state = instructionState;
+                    }
+                  break; 
+
+                case 3:  // Pop
+
+                  // Recover the first word on the stack, go to midPop state
+                  pushDownPtr = (pushDownPtr - 1) & 07777;
+                  // Pushdown list does not use break field
+                  popbuf = M [pushDownPtr & 07777];
+                  state = midPop;
+
+                  break;
+
+                case 4:  // Conditional skip
+                case 5:  // Conditional skip 2
+                  {
+                    // Upper half for case 4, lower for case 5
+                    int shift = opc == 4 ? 6 : 0;
+                    // Get the right buttons
+                    //word6 btns = (pushButtons >> shift) & 00077;
+                    word6 mask = (instrBuf & 00077) << shift;
+                    
+                    word6 compl = (instrBuf & 00400) ? 0 : 07777;
+
+                    if ((pushButtons ^ compl) & mask)
+                      displayAddressCounter = (displayAddressCounter + 2) & 07777;
+                    if (instrBuf & 00200) // Clear
+                      pushButtons = pushButtons & ! mask;
+
+                    if (instrBuf & 00100) // Complement
+                      pushButtons = pushButtons ^ (077 & mask);
+
+                    break;
+                  } // case 4, 5
+
+                case 6:  // Miscellaneous
+                  {
+                    word3 uop = (instrBuf >> 6) & 03;
+                    switch (uop)
+                      {
+                        case 0: // Arithmetic compare Push buttons bank 1
+                        case 1: // Arithmetic compare Push buttons bank 2
+                          {
+                            // Upper half for case 4, lower for case 5
+                            int shift = opc == 4 ? 6 : 0;
+                            // Get the right buttons
+                            word6 btns = (pushButtons >> shift) & 077;
+                            if (btns == (instrBuf & 00077))
+                              displayAddressCounter = (displayAddressCounter + 2) & 07777;
+                            break;
+                          } // case 0, 1
+
+                        case 2: // Arithmetic compare Push buttons bank 2
+                          {
+                            int skip = 0;
+                            if (instrBuf & 00040) // skip unconditional
+                              skip = 1;
+                            if (instrBuf & 00020) // skip if beam off screen
+                              skip |= (xPosition & 016000) == 0 && (yPosition & 016000);
+                            if (instrBuf & 00010) // skip if buttons 0-5
+                              skip != (pushButtons && 07700) != 0;
+                            if (instrBuf & 00004) // skip if buttons 6-11
+                              skip != (pushButtons && 00077) != 0;
+                            if (skip)
+                              displayAddressCounter = (displayAddressCounter + 2) & 07777;
+                            break;
+                          } // case 2
+                        case 3: // Count
+                          {
+                            if (instrBuf & 00040) // Enable count scale
+                              {
+                                if (instrBuf & 00020) // count down
+                                  {
+                                    if (scale > 0)
+                                      scale --;
+                                  }
+                                else // count up
+                                  {
+                                    if (scale < 3)
+                                      scale ++;
+                                  }
+                              }
+                            if (instrBuf & 00010) // Enable count intensity
+                              {
+                                if (instrBuf & 00004) // count down
+                                  {
+                                    if (intensity > 0)
+                                      intensity --;
+                                  }
+                                else // count up
+                                  {
+                                    if (intensity < 3)
+                                      intensity ++;
+                                  }
+                              }
+                            if (instrBuf & 00002) // Enable blink set
+                              blink = instrBuf & 00001;
+                            break;
+                          } // case 3
+
+                        case 4: // Slave 0 logic
+                        case 5: // Slave 1 logic
+                        case 6: // Slave 2 logic
+                        case 7: // Slave 3 logic
+                          break; // slaves not supported.
+
+                      } // switch (uop)
+                    break;
+                  } // case misc.
+
+                case 7:  // Spare
+                  break;
+
+              } // switch opc
+
+            break;
+          } // case instructionFetchComplete;
+
+        case midPush:
+          {
+            // Save the second word and jump.
+
+            // Pushdown list does not use break field
+            M [pushDownPtr & 07777] = displayAddressCounter & 0777;
+            pushDownPtr = (pushDownPtr + 1) & 07777;
+
+            breakField = instrBuf & 03;
+            displayAddressCounter = instrBuf2 & 07777;
+            state = instructionState;
+
+            break;
+          } // case (midPush)
+
+        case midPop:
+          {
+            // The top word in the stack is in popbuf; pop the next word
+
+            // Recover the first word on the stack, go to midPop state
+            pushDownPtr = (pushDownPtr - 1) & 07777;
+            // Pushdown list does not use break field
+            word12 popbuf2 = M [pushDownPtr & 07777];
+
+            // Recover the bits from the popped data.
+            // popbuf has the DAC, popbuf2 the status bits.
+
+            if ((instrBuf & 00010) == 0) // Do not inhibit mode restore
+              mode = (popbuf2 >> 3) & 03;
+            
+            if ((instrBuf & 00004) == 0) // Do not inhibit light pen and scale  restore
+              {
+                lightPenEnable = (popbuf2 >> 8) & 01;
+                scale = (popbuf2 >> 6) & 03;
+              }
+
+            if ((instrBuf & 00002) == 0) // Do not inhibit instensity restore
+              intensity = popbuf2 & 07;
+            
+            if (instrBuf & 00400) // Enable scale change
+              scale = (instrBuf >> 6) & 03;
+            if (instrBuf & 00040) // Enable light pen change
+              lightPenEnable = (instrBuf >> 6) & 03;
+
+            breakField = popbuf2 & 03;
+            displayAddressCounter = popbuf & 07777;
+
+            if (instrBuf & 00001) // Enter data state
+              {
+                if (mode == 07)
+                  {
+                    internalStopFlag = 1;
+                    updateInterrupt ();
+                    state = internalStop;
+                  }
+                else
+                  {
+                    state = dataState;
+                    controlStateFlag = 0;
+                  }
+              }
+            else
+              state = instructionState;
+            break;
+          } // case (midPop)
+
+        case internalStop:
+
+          if (internalStopFlag == 0)
+            state = instructionState;
+          break;
+
+        case dataState:
+          {
+            dacwas = displayAddressCounter; // debugging
+            instrBuf = M[displayAddressCounter | (breakField << 12)];
+            displayAddressCounter = (displayAddressCounter + 1) & 07777;
+            switch (mode)
+              {
+                case 0: // Point
+                case 2: // Vector
+                case 3: // Vector Continue
+                  state = midDataFetch;
+                  break;
+                case 1: // Increment
+                case 4: // Short Vector
+                case 5: // Character
+                case 6: // Graphplot
+                  state = dataFetchComplete;
+                  break;
+                case 7: // Unused
+                  // Can't happen -- mode is verifed on entry to data state.
+                  break;
+              }
+            break;
+          } // case dataState
+
+        case midDataFetch:
+          instrBuf2 = M[displayAddressCounter | (breakField << 12)];
+          displayAddressCounter = (displayAddressCounter + 1) & 07777;
+          break;
+
+        case dataFetchComplete:
+          {
+            switch (mode)
+              {
+                case 0: // Point
+                  {
+                    word13 y = yPosition;
+                    word13 x = xPosition;
+                    if ((instrBuf & 02000) == 0)
+                      y = (yPosition & 016000) | (instrBuf & 01777);
+
+                    if ((instrBuf2 & 02000) == 0)
+                      x = (xPosition & 016000) | (instrBuf2 & 01777);
+                    word1 beamOn = (instrBuf & 04000) ? 1 : 0;
+                    // XXX draw point (x, y, beamOn)
+                    break;
+                  } // case (point)
+
+                case 1: // Increment
+                  {
+                    word1 beamOn1 = (instrBuf & 04000) ? 1 : 0;
+                    word2 nMoves1 = (instrBuf >> 9) & 03;
+                    word3 dir1 = (instrBuf >> 6) & 07;
+                    // XXX draw increment (dir1, nMoves1, beamOn1)
+                    if (nMoves1 != 0)
+                      {
+                        word1 beamOn2 = (instrBuf & 00040) ? 1 : 0;
+                        word2 nMoves2 = (instrBuf >> 3) & 03;
+                        word3 dir2 = instrBuf & 07;
+                        // XXX draw increment (dir2, nMoves2, beamOn2)
+                      }
+                    break;
+                  }
+
+                case 2: // Vector
+                case 3: // Vector Continue
+                  {
+                    word1 beamOn = (instrBuf & 04000) ? 1 : 0;
+                    word10 dy = instrBuf & 01777;
+                    word1 sy = (instrBuf & 02000) ? 1 /* + */ : 0 /* - */;
+                    word10 dx = instrBuf2 & 01777;
+                    word1 sx = (instrBuf2 & 02000) ? 1 /* + */ : 0 /* - */;
+
+                    word13 x, y;
+
+                    if (sx)
+                      x = (xPosition + dx) & 017777;
+                    else
+                      x = (xPosition - dx) & 017777;
+
+                    if (sy)
+                      y = (yPosition + dy) & 017777;
+                    else
+                      y = (yPosition - dy) & 017777;
+
+                    // XXX draw vector (x, y, beamOn, opc == 3)
+                    break;
+                  } // case (vector, vector continue)
+
+                  break;
+
+                case 4: // Short Vector
+                  {
+                    word1 beamOn = (instrBuf & 04000) ? 1 : 0;
+                    word10 dy = (instrBuf >> 6) & 017;
+                    word1 sy = (instrBuf & 02000) ? 1 /* + */ : 0 /* - */;
+                    word10 dx = (instrBuf >> 0) & 017;
+                    word1 sx = (instrBuf2 & 00020) ? 1 /* + */ : 0 /* - */;
+
+                    word13 x, y;
+
+                    if (sx)
+                      x = (xPosition + dx) & 017777;
+                    else
+                      x = (xPosition - dx) & 017777;
+
+                    if (sy)
+                      y = (yPosition + dy) & 017777;
+                    else
+                      y = (yPosition - dy) & 017777;
+
+                    // XXX draw vector (x, y, beamOn, 0)
+                    break;
+                  } // case (short vector)
+
+                case 5: // Character
+                  {
+                    if (cgCodeSize) // Set is 7 bit
+                      {
+                        word7 ch = instrBuf & 00177;
+                        // XXX draw char (ch)
+                      }
+                    else
+                      {
+                        word7 ch1 = (instrBuf >> 6) & 00077;
+                        word7 ch2 = (instrBuf >> 0) & 00077;
+                        // XXX draw char (ch1)
+                        // XXX draw char (ch2)
+                      }
+                    break;
+                  } // case (character)
+
+                case 6: // Graphplot
+                  {
+                    word13 x = xPosition;
+                    word13 y = yPosition;
+                    if (instrBuf & 02000) // incr. y, set x
+                      {
+                        y = (y + 1) & 017777;
+                        x = instrBuf & 01777;
+                      }
+                    else // incr. x, set y
+                      {
+                        x = (x + 1) & 017777;
+                        y = instrBuf & 01777;
+                      }
+                    // XXX graphplot (x, y)
+                    break;
+                  } // case: graphplot
+
+                case 7: // Unused
+                  // Can't happen -- mode is verifed on entry to data state.
+                  break;
+              } // switch (mode)
+            mode = dataExecutionWait;
+            break;
+          } // case dataFetchComplete
+
+        case dataExecutionWait:
+          {
+            switch (mode)
+              {
+                case 0: // Point
+                case 2: // Vector
+                case 3: // Vector Continue
+                case 6: // Graphplot
+                  {
+                    if (instrBuf2 & 04000) // Escape
+                      {
+                        state = instructionState;
+                        controlStateFlag = 1;
+                      }
+                    else
+                      state = dataState;
+                    break;
+                  } // case point
+
+                case 1: // Increment
+                  {
+                    if ((instrBuf & 03000) == 0 || // Escape in first half
+                        (instrBuf & 00030) == 0) // Escape in second half
+                      {
+                        state = instructionState;
+                        controlStateFlag = 1;
+                      }
+                    else
+                      {
+                        state = dataState;
+                      }
+                    break;
+                  }
+
+                case 4: // Short vector
+                  {
+                    if (instrBuf2 & 00040) // Escape
+                      {
+                        state = instructionState;
+                        controlStateFlag = 1;
+                      }
+                    else
+                      state = dataState;
+                    break;
+                  } // case point
+
+                case 5: // Character
+                case 7: // Unused Can't happen -- mode is verifed on entry to data state.
+                  state = dataState;
+                  break;
+              } // switch mode
+            break;
+          } // case dataExecutionWait
+      } // switch (state)
+  } // sim_instr_d8
