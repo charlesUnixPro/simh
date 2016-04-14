@@ -419,6 +419,7 @@ while (reason == 0) {                                   /* loop until halted */
             }
         }
 
+//printf ("p %04o %04o\r\n", MA, IR);
 switch ((IR >> 7) & 037) {                              /* decode IR<0:4> */
 
 /* Opcode 0, AND */

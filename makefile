@@ -1086,9 +1086,9 @@ PDP8 = ${PDP8D}/pdp8_cpu.c ${PDP8D}/pdp8_clk.c ${PDP8D}/pdp8_df.c \
 	${PDP8D}/pdp8_rx.c ${PDP8D}/pdp8_sys.c ${PDP8D}/pdp8_tt.c \
 	${PDP8D}/pdp8_ttx.c ${PDP8D}/pdp8_rl.c ${PDP8D}/pdp8_tsc.c \
 	${PDP8D}/pdp8_td.c ${PDP8D}/pdp8_ct.c ${PDP8D}/pdp8_fpp.c \
-	${PDP8D}/pdp8_d8.c
+	${PDP8D}/pdp8_d8.c ${PDP8D}/x11.c
 
-PDP8_OPT = -I ${PDP8D}
+PDP8_OPT = -I ${PDP8D} -lX11
 
 
 H316D = H316

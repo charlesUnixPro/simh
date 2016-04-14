@@ -1,3 +1,6 @@
+//#define sdbg sim_printf
+#define sdbg if (0) sim_printf
+
 /* pdp8_d8.c: DISPLAY-8 / 338 Program Buffered Display
 
    Copyright (c) 1993-2011, Robert M Supnik
@@ -29,6 +32,12 @@
 
 #include "pdp8_defs.h"
 
+void init_graphics (int argc, char *argv[], int p_smallwindow,
+                   int p_use_pixmap, int p_line_width, char *window_name);
+void open_page (int step);
+void close_page (void);
+void handle_input (void);
+
 typedef uint16 word1;
 typedef uint16 word2;
 typedef uint16 word3;
@@ -39,6 +48,8 @@ typedef uint16 word12;
 typedef uint16 word13;
 
 extern int32 int_req, int_enable, dev_done, stop_inst;
+extern int32 tmxr_poll;
+static int refresh_rate = 1;
 
 DEVICE d8_dev;
 
@@ -221,6 +232,19 @@ enum d8_state {
   //externalStopData // implemented as breakRequestFlag.
 };
 
+static char * states [] = {
+  "instructionState",
+  "midFetch",
+  "instructionFetchComplete",
+  "midPush",
+  "midPop", 
+  "internalStop",
+  "dataState",
+  "midDataFetch",
+  "dataFetchComplete",
+  "dataExecutionWait",
+};
+
 static enum d8_state state;
 /* sub-state flags */
 static word12 instrBuf;
@@ -309,6 +333,20 @@ DEVICE d8_dev = {
 
 t_stat d8_svc (UNIT *uptr)
 {
+//sim_printf ("svc %d %d\n", time(NULL), tmxr_poll);
+#if 1
+static time_t last = 0;
+static int cnt = 0; 
+time_t now = time(NULL);
+if (now == last) cnt ++;
+else { printf ("cnt %d tmxr_poll %d\r\n", cnt, tmxr_poll); cnt = 0; last = now;}
+#endif
+//sim_clock_coschedule (uptr, refresh_rate);                 /* continue poll */
+sim_activate (uptr, tmxr_poll/refresh_rate/**tmxr_poll*/);                 /* continue poll */
+
+close_page ();
+open_page (1);
+handle_input ();
 return SCPE_OK;
 }
 
@@ -323,14 +361,14 @@ static void updateInterrupt (void)
         manualInterruptFlag)
       {
         displayInterruptFlag = 1;
-        int_enable = int_enable | INT_LPT; // set enable 
-        int_req = INT_D8 | INT_UPDATE; // update interrupts 
+        dev_done = dev_done | INT_LPT;                          /* set done */
+        int_req = INT_UPDATE;                                   /* update interrupts */
+
       }
     else
       {
         displayInterruptFlag = 0;
-        dev_done = dev_done | INT_D8; // set flag
-        int_req = INT_UPDATE; // update interrupts
+        int_req = int_req & ~INT_LPT;
       }
   }
 
@@ -342,6 +380,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
 
     case 1:                                             /* RDPD */
         // RDPD 6051 Read Push Down Pointer
+        sdbg ("IOT RDPD %04o\n", AC | pushDownPtr);
         // A 1s (inclusive OR) transfer from the push down pointer
         // (12 bits) to the AC is done
         return AC | pushDownPtr;
@@ -407,11 +446,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
           (displayInterruptFlag ? SR1_DIF  : 0) |
           (breakField & SR1_BFR);
         pushButtonHitFlag = 0;
-        // XXX this is assuming only a single interrupt event
-        // XXX is outstanding? does it need to set dev_done
-        // XXX if all of the flags are 0?
-        dev_done = dev_done | INT_D8; // set flag
-        int_req = INT_UPDATE; // update interrupts
+        updateInterrupt ();
         break;
 
     case 4:                                             /* RS2 */
@@ -445,7 +480,8 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         // RPB 6071 Read Push Buttons
         // The contents of the twelve push buttons (0-11) are transferred
         // into the corresponding AC bits.
-        return pushButtons;
+//printf ("rpb %04o\r\n", pushButtons & 07777);
+        return pushButtons & 07777;
 
     case 2:                                             /* RSG1 */
         // RSG1 6072 Read Slave Group 1
@@ -477,7 +513,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
 
     case 2:                                             /* SLPP */
         // SLPP 6132 Skip on Light Pen Hit Flag
-        return lightPenHitFlag ? IOT_SKP + AC: AC;
+        return lightPenHitFlag ? IOT_SKP | AC : AC;
 
     case 5:                                             /* SPDP */
         // SPDP 6135 Set the Push Down Pointer
@@ -500,6 +536,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
 
     case 5:                                             /* SIC */
         // SIC 6145 Set Initial Conditions
+        sdbg ("IOT SIC %04o\n", AC);
         // Set interrupt enable flags, paper size and light pen conditions.
         enableEdgeFlagInterrupt = (AC & SIC_EFI) ? 1 : 0;
         enableLightPenFlagInterrupt = (AC & SIC_ELPI) ? 1 : 0;
@@ -512,12 +549,8 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         enablePushButtonHitInterrupt = (AC & SIC_EPBI) ? 1 : 0;
         enableInternalStopInterrupt = (AC & SIC_EISI) ? 1 : 0;
         updateInterrupt ();
-        //if (enableEdgeFlagInterrupt || enableLightPenFlagInterrupt || enablePushButtonHitInterrupt || enableInternalStopInterrupt)
-          //int_enable = int_enable | INT_D8;
-        //else
-          //int_enable = int_enable & ~ INT_D8;
-        //int_req = INT_UPDATE;                           /* update interrupts */
-
+        // XXX Guessing
+        xPosition = yPosition = 0;
         return AC;
     }
 return AC;
@@ -525,6 +558,44 @@ return AC;
 
 int32 d8_15 (int32 IR, int32 AC)
 {
+
+// The AC checks in this IOT are a side effect of the slightly incorrect
+// implementation of IOTs. On the orignal PDP/8 hardware, the IOT bits
+// 9,10,11 controlled the genertation of the IOT1, IOT2 and IOT4 pulses.
+// These pulses were generated sequentially rather the in parallel like
+// simh tends to treat them. 
+//
+// So for SPES (6151), the h/w would, on each clock cycle, set IOP to 1, then
+// 0 and then 0. 
+//
+//               IOP at
+//     instr     clock  0    1    2
+//     -----
+//   SPES 6151          1    0    0
+//   SPEF 6152          0    1    0
+//   STPD 6154          0    0    1
+//   LBF  6155          1    0    1
+//
+//
+// The device would count the clock cycles and gate the IOP to the
+// appropriate logic; some devices had a very minimal set of IOP
+// gating logic, and used bits in the AC to do the additional decoding.
+//
+// IOT 15 is setup up so that the IOP timing logic can be simplifed. If
+// IOP1 is zero, then the operation is either SPES, SPPD or LBF. The LBF
+// has two enable flags in the AC, at bits 0 and 4 (04200). If either or
+// both are set, the IOT is an LBF. If neither are set, then IOP2 selects
+// the SPES or SPPD instruction.
+//
+// The simplification of the logic proably saved a couple of Flip Chips, but
+// allowed the possibility of instructions with non-canonical forms to execute
+// predictibly; but without knowing the details of the hardware, it is 
+// difficult to model them.
+//
+// The following code executes canonically; any code that varies from canon
+// may behave differently from the h/w.
+// 
+
 switch (IR & 07) {                                      /* decode IR<9:11> */
 
     case 1:                                             /* SPES */
@@ -550,22 +621,24 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         signalExternalStop = 1;
         return AC;
         
-    case 5:                                             /* SIC */
+    case 5:                                             /* LBF */
         // LBF 6155 Load Break field
+        sdbg ("IOT LBF %04o\n", AC);
         if (AC & LBF_BFE) { // Is change break field set?
             breakField = (AC >> LBF_BF_SHIFT) & 07;
         }
         if (AC & LBF_PBE) { // Is change push buttons set?
             word6 tmp = AC & LBF_PBS;
             if (AC & LBF_WPB) { // High half or low?
-                // High half
-                pushButtons &= 00077; // Clear high half
-                pushButtons |= tmp << 6; // Set high half
-                } else {
                 // Low half
                 pushButtons &= 07700; // Clear low half
                 pushButtons |= tmp; // Set low half
+                } else {
+                // High half
+                pushButtons &= 00077; // Clear high half
+                pushButtons |= tmp << 6; // Set high half
                 }
+//printf ("lbf %04o\n", pushButtons);
             }
         return AC;
     }
@@ -597,17 +670,16 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         if (AC)
             return AC; // "The AC must be zero before RES2 is given
         breakRequestFlag = 1; // Start the display
-        // XXX this is assuming only a single interrupt event
-        // XXX is outstanding? does it need to set dev_done
-        // XXX if all of the flags are 0?
-        dev_done = dev_done | INT_D8; // set flag
-        int_req = INT_UPDATE; // update interrupts
+        updateInterrupt ();
         return AC;
 
     case 5:                                             /* INIT */
         // INIT 6165 Initialize the display
+        sdbg ("IOT INIT %04o\n", AC);
         displayAddressCounter = AC & 07777;
         breakRequestFlag = 1; // Start the display
+        int_enable = int_enable | INT_LPT;              /* set enable */
+        int_req = INT_UPDATE;                           /* update interrupts */
         return AC;
     }
 
@@ -628,14 +700,11 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         if (manualInterruptFlag)
           AC |= IOT_SKP;
         manualInterruptFlag = 0;
-        // XXX this is assuming only a single interrupt event
-        // XXX is outstanding? does it need to set dev_done
-        // XXX if all of the flags are 0?
-        dev_done = dev_done | INT_D8; // set flag
-        int_req = INT_UPDATE; // update interrupts
+        updateInterrupt ();
         break;
 
-    case 5:                                             /* RES1 */
+    case 4:                                             /* RES1 */
+//printf ("RES1\r\n");
         // RES1 6174 Resume After Light Pen Hit, Edge, or External Stop Flag
         if (lightPenHitFlag || verticalEdgeFlag || horizontalEdgeFlag ||
           externalStopFlag) {
@@ -645,11 +714,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
             externalStopFlag= 0;
             breakRequestFlag = 1; // Start the display
             updateInterrupt ();
-            // // XXX this is assuming only a single interrupt event
-            // // XXX is outstanding? does it need to set dev_done
-            // // XXX if all of the flags are 0?
-            // dev_done = dev_done | INT_D8; // set flag
-            // int_req = INT_UPDATE; // update interrupts
+//printf ("RES1 start\r\n");
         }
         break;
     }
@@ -685,8 +750,25 @@ return AC;
 
 /* Reset routine */
 
+static int graphicsInited = 0;
+
 t_stat d8_reset (DEVICE *dptr)
 {
+if (graphicsInited == 0) {
+  int argc = 0;
+  char ** argv = NULL;
+  int windowSize = 0; // 0 large, 1 small
+  int usePixmap = 0;
+  int lineWidth = 0;
+  static char * windowName = "338";
+  init_graphics (argc, argv, windowSize, usePixmap, lineWidth, windowName);
+  open_page (1);
+  graphicsInited = 1;
+  //d8_unit.wait=1;
+  sim_activate (&d8_unit, tmxr_poll/refresh_rate/**tmxr_poll*/);               /* activate */
+
+}
+
 // 2.3.2.8 "The power clear pulse (START key) also clears all display flags.
 // All display flags cat be cleared by giving three IOTs: CFD-6161 (internal
 // and external stop, light pen high, and edge); RS1-6062 (push button); and 
@@ -708,115 +790,69 @@ signalExternalStop = 0;
 
 blink = 0;
 
-dev_done = dev_done & ~INT_D8;                          /* clear done, int */
+dev_done = dev_done & ~INT_D8;                         /* clear done, int */
 int_req = int_req & ~INT_D8;
-int_enable = int_enable | INT_D8;
+int_enable = int_enable | INT_D8;                      /* set enable */
+
 
 return SCPE_OK;
 }
 
-#if 0 // NEVER
-/* IOT routine */
+// Interface to the vector H/W
 
-int32 lpt (int32 IR, int32 AC)
-{
-switch (IR & 07) {                                      /* decode IR<9:11> */
+void draw_line (int x1, int y1, int x2, int y2, unsigned long color);
+static void drawPoint (word13 x, word13 y, word1 beamOn)
+  {
+    sdbg ("draw point at x %d y %d on %d\n", x, y, beamOn);
+    draw_line (x, y, x, y, 0xffffff);
+    xPosition = x;
+    yPosition = y;
+  }
 
-    case 1:                                             /* PSKF */
-        return (dev_done & INT_LPT)? IOT_SKP + AC: AC;
-
-    case 2:                                             /* PCLF */
-        dev_done = dev_done & ~INT_LPT;                 /* clear flag */
-        int_req = int_req & ~INT_LPT;                   /* clear int req */
-        return AC;
-
-    case 3:                                             /* PSKE */
-        return (lpt_err)? IOT_SKP + AC: AC;
-
-    case 6:                                             /* PCLF!PSTB */
-        dev_done = dev_done & ~INT_LPT;                 /* clear flag */
-        int_req = int_req & ~INT_LPT;                   /* clear int req */
-
-    case 4:                                             /* PSTB */
-        lpt_unit.buf = AC & 0177;                       /* load buffer */
-        if ((lpt_unit.buf == 015) || (lpt_unit.buf == 014) ||
-            (lpt_unit.buf == 012)) {
-            sim_activate (&lpt_unit, lpt_unit.wait);
-            return AC;
-            }
-        return (lpt_svc (&lpt_unit) << IOT_V_REASON) + AC;
-
-    case 5:                                             /* PSIE */
-        int_enable = int_enable | INT_LPT;              /* set enable */
-        int_req = INT_UPDATE;                           /* update interrupts */
-        return AC;
-
-    case 7:                                             /* PCIE */
-        int_enable = int_enable & ~INT_LPT;             /* clear enable */
-        int_req = int_req & ~INT_LPT;                   /* clear int req */
-        return AC;
-
-    default:
-        return (stop_inst << IOT_V_REASON) + AC;
-        }                                               /* end switch */
-}
-
-/* Unit service */
-
-t_stat lpt_svc (UNIT *uptr)
-{
-dev_done = dev_done | INT_LPT;                          /* set done */
-int_req = INT_UPDATE;                                   /* update interrupts */
-if ((uptr->flags & UNIT_ATT) == 0) {
-    lpt_err = 1;
-    return IORETURN (lpt_stopioe, SCPE_UNATT);
-    }
-fputc (uptr->buf, uptr->fileref);                       /* print char */
-uptr->pos = ftell (uptr->fileref);
-if (ferror (uptr->fileref)) {                           /* error? */
-    sim_perror ("LPT I/O error");
-    clearerr (uptr->fileref);
-    return SCPE_IOERR;
-    }
-return SCPE_OK;
-}
-
-/* Reset routine */
-
-t_stat lpt_reset (DEVICE *dptr)
-{
-lpt_unit.buf = 0;
-dev_done = dev_done & ~INT_LPT;                         /* clear done, int */
-int_req = int_req & ~INT_LPT;
-int_enable = int_enable | INT_LPT;                      /* set enable */
-lpt_err = (lpt_unit.flags & UNIT_ATT) == 0;
-sim_cancel (&lpt_unit);                                 /* deactivate unit */
-return SCPE_OK;
-}
-
-/* Attach routine */
-
-t_stat lpt_attach (UNIT *uptr, char *cptr)
-{
-t_stat reason;
-
-reason = attach_unit (uptr, cptr);
-lpt_err = (lpt_unit.flags & UNIT_ATT) == 0;
-return reason;
-}
-
-/* Detach routine */
-
-t_stat lpt_detach (UNIT *uptr)
-{
-lpt_err = 1;
-return detach_unit (uptr);
-}
+static void drawIncrement (word3 dir, word2 n, word1 beamOn)
+  {
+    if (n == 0)
+      n = 1;
+    int dx = 0, dy = 0;
+    switch (dir)
+      {
+        case 0: dx = +n;          break;
+        case 1: dx = +n; dy =+ n; break;
+        case 2:          dy = +n; break;
+        case 3: dx = -n; dy = +n; break;
+        case 4: dx = -n;          break;
+        case 5: dx = -n; dy = -n; break;
+        case 6:          dy = -n; break;
+        case 7: dx = +n; dy = -n; break;
+      }
+    sdbg ("draw increment dir %d (%d, %d) n %d on %d\n", dir, dx, dy, n, beamOn);
+    //printf ("draw increment dir %d (%d, %d) n %d on %d\r\n", dir, dx, dy, n, beamOn);
+#if 0
+    draw_line (xPosition, yPosition, (xPosition + dx) & 01777, (yPosition + dy) & 01777, 0xffffff);
+#else
+    draw_line (xPosition, yPosition, xPosition + dx, yPosition + dy, 0xffffff);
 #endif
+    xPosition = (xPosition + dx) & 01777;
+    yPosition = (yPosition + dy) & 01777;
+  }
+
+static void drawVector (word13 x, word13 y, word1 beamOn, int con)
+  {
+    // XXX deal with con
+    sdbg ("draw vector to x %d y %d on %d (con %d)\n", x, y, beamOn, con);
+    //printf ("draw vector to x %d y %d on %d (con %d)\r\n", x, y, beamOn, con);
+    draw_line (xPosition, yPosition, x, y, 0xffffff);
+    xPosition = x;
+    yPosition = y;
+  }
+
+static void drawChar (word7 ch)
+  {
+    sdbg ("draw char %d\n", ch);
+    // XXX deal with dx/dy
+  }
 
 // Step the display processor
-
-#define sdgb 
 
 extern uint16 M[];
 
@@ -827,6 +863,7 @@ void sim_instr_d8 (void)
     if (! breakRequestFlag)
       return;  // Not running.
 
+    sdbg ("d8 state %s\n", states [state]);
     switch (state)
       {
         case instructionState:
@@ -889,6 +926,7 @@ void sim_instr_d8 (void)
 
         case instructionFetchComplete:
           {
+//printf ("i %04o %04o\r\n", dacwas, instrBuf); 
             state = instructionState; // Set default state transition
 
             word3 opc = (instrBuf >> 9) & 07;
@@ -924,7 +962,7 @@ void sim_instr_d8 (void)
                     }
 
                   if (instrBuf & 00100) // Enable mode change
-                    mode = (instrBuf >> 3) & 03;
+                    mode = (instrBuf >> 3) & 07;
 
                   if (instrBuf & 00004) // Clear high order position bits
                     {
@@ -995,21 +1033,21 @@ void sim_instr_d8 (void)
                 case 5:  // Conditional skip 2
                   {
                     // Upper half for case 4, lower for case 5
-                    int shift = opc == 4 ? 6 : 0;
+                    int shift = (opc == 4) ? 6 : 0;
                     // Get the right buttons
-                    //word6 btns = (pushButtons >> shift) & 00077;
                     word6 mask = (instrBuf & 00077) << shift;
                     
                     word6 compl = (instrBuf & 00400) ? 0 : 07777;
 
                     if ((pushButtons ^ compl) & mask)
                       displayAddressCounter = (displayAddressCounter + 2) & 07777;
+//else printf ("didn't skip opc %d shift %d mask %04o compl %04o btns %04o\r\n", opc, shift, mask, compl, pushButtons);
                     if (instrBuf & 00200) // Clear
-                      pushButtons = pushButtons & ! mask;
+                      pushButtons = pushButtons & ~ mask;
 
                     if (instrBuf & 00100) // Complement
-                      pushButtons = pushButtons ^ (077 & mask);
-
+                      pushButtons = pushButtons ^ (07777 & mask);
+//printf ("sk %04o\r\n", pushButtons);
                     break;
                   } // case 4, 5
 
@@ -1038,9 +1076,9 @@ void sim_instr_d8 (void)
                             if (instrBuf & 00020) // skip if beam off screen
                               skip |= (xPosition & 016000) == 0 && (yPosition & 016000);
                             if (instrBuf & 00010) // skip if buttons 0-5
-                              skip != (pushButtons && 07700) != 0;
+                              skip |= (pushButtons && 07700) != 0;
                             if (instrBuf & 00004) // skip if buttons 6-11
-                              skip != (pushButtons && 00077) != 0;
+                              skip |= (pushButtons && 00077) != 0;
                             if (skip)
                               displayAddressCounter = (displayAddressCounter + 2) & 07777;
                             break;
@@ -1196,10 +1234,12 @@ void sim_instr_d8 (void)
         case midDataFetch:
           instrBuf2 = M[displayAddressCounter | (breakField << 12)];
           displayAddressCounter = (displayAddressCounter + 1) & 07777;
+          state = dataFetchComplete;
           break;
 
         case dataFetchComplete:
           {
+//printf ("d %04o %04o %d\r\n", dacwas, instrBuf, mode); 
             switch (mode)
               {
                 case 0: // Point
@@ -1212,7 +1252,7 @@ void sim_instr_d8 (void)
                     if ((instrBuf2 & 02000) == 0)
                       x = (xPosition & 016000) | (instrBuf2 & 01777);
                     word1 beamOn = (instrBuf & 04000) ? 1 : 0;
-                    // XXX draw point (x, y, beamOn)
+                    drawPoint (x, y, beamOn);
                     break;
                   } // case (point)
 
@@ -1221,13 +1261,13 @@ void sim_instr_d8 (void)
                     word1 beamOn1 = (instrBuf & 04000) ? 1 : 0;
                     word2 nMoves1 = (instrBuf >> 9) & 03;
                     word3 dir1 = (instrBuf >> 6) & 07;
-                    // XXX draw increment (dir1, nMoves1, beamOn1)
+                    drawIncrement (dir1, nMoves1, beamOn1);
                     if (nMoves1 != 0)
                       {
                         word1 beamOn2 = (instrBuf & 00040) ? 1 : 0;
                         word2 nMoves2 = (instrBuf >> 3) & 03;
                         word3 dir2 = instrBuf & 07;
-                        // XXX draw increment (dir2, nMoves2, beamOn2)
+                        drawIncrement (dir2, nMoves2, beamOn2);
                       }
                     break;
                   }
@@ -1237,23 +1277,23 @@ void sim_instr_d8 (void)
                   {
                     word1 beamOn = (instrBuf & 04000) ? 1 : 0;
                     word10 dy = instrBuf & 01777;
-                    word1 sy = (instrBuf & 02000) ? 1 /* + */ : 0 /* - */;
+                    word1 sy = (instrBuf & 02000) ? 1 /* - */ : 0 /* + */;
                     word10 dx = instrBuf2 & 01777;
-                    word1 sx = (instrBuf2 & 02000) ? 1 /* + */ : 0 /* - */;
-
+                    word1 sx = (instrBuf2 & 02000) ? 1 /* - */ : 0 /* + */;
+//printf ("sx %d dx %d sy %d dy %d\r\n", sx, dx, sy, dy);
                     word13 x, y;
 
                     if (sx)
-                      x = (xPosition + dx) & 017777;
-                    else
                       x = (xPosition - dx) & 017777;
+                    else
+                      x = (xPosition + dx) & 017777;
 
                     if (sy)
-                      y = (yPosition + dy) & 017777;
-                    else
                       y = (yPosition - dy) & 017777;
+                    else
+                      y = (yPosition + dy) & 017777;
 
-                    // XXX draw vector (x, y, beamOn, opc == 3)
+                    drawVector (x, y, beamOn, mode == 3);
                     break;
                   } // case (vector, vector continue)
 
@@ -1261,11 +1301,12 @@ void sim_instr_d8 (void)
 
                 case 4: // Short Vector
                   {
+//printf ("svec\r\n");
                     word1 beamOn = (instrBuf & 04000) ? 1 : 0;
                     word10 dy = (instrBuf >> 6) & 017;
                     word1 sy = (instrBuf & 02000) ? 1 /* + */ : 0 /* - */;
                     word10 dx = (instrBuf >> 0) & 017;
-                    word1 sx = (instrBuf2 & 00020) ? 1 /* + */ : 0 /* - */;
+                    word1 sx = (instrBuf & 00020) ? 1 /* + */ : 0 /* - */;
 
                     word13 x, y;
 
@@ -1279,7 +1320,7 @@ void sim_instr_d8 (void)
                     else
                       y = (yPosition - dy) & 017777;
 
-                    // XXX draw vector (x, y, beamOn, 0)
+                    drawVector (x, y, beamOn, 0);
                     break;
                   } // case (short vector)
 
@@ -1314,7 +1355,7 @@ void sim_instr_d8 (void)
                         x = (x + 1) & 017777;
                         y = instrBuf & 01777;
                       }
-                    // XXX graphplot (x, y)
+                    drawVector (x, y, 1, 0);
                     break;
                   } // case: graphplot
 
@@ -1322,7 +1363,7 @@ void sim_instr_d8 (void)
                   // Can't happen -- mode is verifed on entry to data state.
                   break;
               } // switch (mode)
-            mode = dataExecutionWait;
+            state = dataExecutionWait;
             break;
           } // case dataFetchComplete
 
@@ -1362,7 +1403,8 @@ void sim_instr_d8 (void)
 
                 case 4: // Short vector
                   {
-                    if (instrBuf2 & 00040) // Escape
+//printf ("svec esc %04o\r\n", instrBuf & 00040);
+                    if (instrBuf & 00040) // Escape
                       {
                         state = instructionState;
                         controlStateFlag = 1;
@@ -1381,3 +1423,40 @@ void sim_instr_d8 (void)
           } // case dataExecutionWait
       } // switch (state)
   } // sim_instr_d8
+
+
+/* x11 callbacks */
+
+void lp_hit (void)
+  {
+    lightPenHitFlag = 1; // signal the engine
+    updateInterrupt ();
+    breakRequestFlag = 0; // Stop the display
+    //sim_printf ("lp hit\r\n");
+  }
+
+void btn_press (int n)
+  {
+    if (n < 0 || n > 11)
+      return;
+    word12 mask = 1u << n;
+    // Pressing a button complements its state.
+    pushButtons ^= mask;
+    // Setting a button on unsets the others 
+    // in its group
+    if (pushButtons & mask)
+      {
+        word12 cmask;
+        if (n < 6)
+          cmask = 07700; // if in the low group, keep the high group
+        else
+          cmask = 00077; // v.v.
+        cmask |= mask; // keep the one just set
+        pushButtons &= cmask; // clear the others in the group
+      }
+    pushButtonHitFlag = 1; // signal the engine
+    updateInterrupt ();
+    //printf ("pb %04o\r\n", pushButtons);
+  }
+
+
