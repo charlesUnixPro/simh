@@ -1,6 +1,3 @@
-//#define sdbg sim_printf
-#define sdbg if (0) sim_printf
-
 /* pdp8_d8.c: DISPLAY-8 / 338 Program Buffered Display
 
    Copyright (c) 1993-2011, Robert M Supnik
@@ -31,12 +28,16 @@
 */
 
 #include "pdp8_defs.h"
+#include <stdint.h>
 
-void init_graphics (int argc, char *argv[], int p_smallwindow,
-                   int p_use_pixmap, int p_line_width, char *window_name);
-void open_page (int step);
-void close_page (void);
-void handle_input (void);
+// Interface to X11
+
+void initGraphics (int argc, char * argv [], int windowSizeScale_,
+                   int lineWidth_, char * windowName);
+void handleInput (void);
+void drawSegment (uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t intensity);
+void flushDisplay (void);
+void refreshDisplay (void);
 
 typedef uint16 word1;
 typedef uint16 word2;
@@ -46,15 +47,19 @@ typedef uint16 word7;
 typedef uint16 word10;
 typedef uint16 word12;
 typedef uint16 word13;
+typedef uint16 word15;
+
+extern uint16 M[];
 
 extern int32 int_req, int_enable, dev_done, stop_inst;
 extern int32 tmxr_poll;
-static int refresh_rate = 1;
+extern int32 saved_PC;                                     /* saved IF'PC */
 
+static int refresh_rate = 1;
 DEVICE d8_dev;
 
-int32 d8_err = 0;                                      /* error flag */
-int32 d8_stopioe = 0;                                  /* stop on error */
+//static int32 d8_err = 0;                                      /* error flag */
+//static int32 d8_stopioe = 0;                                  /* stop on error */
 
 /* 338 state engine */
 
@@ -101,11 +106,11 @@ int32 d8_stopioe = 0;                                  /* stop on error */
 // The interrupt causing flags
 static word1  internalStopFlag;
 static word1  externalStopFlag;
-static word1  verticalEdgeFlag;
-static word1  horizontalEdgeFlag;
+static word1  verticalEdgeFlag;  // XXX unimpl.
+static word1  horizontalEdgeFlag;  // XXX unimpl.
 static word1  lightPenHitFlag;
 static word1  pushButtonHitFlag;
-static word1  manualInterruptFlag;
+static word1  manualInterruptFlag;  // XXX unimpl.
 
 // Interrupt pending
 static word1  displayInterruptFlag;
@@ -117,7 +122,7 @@ static word1  enablePushButtonHitInterrupt;
 static word1  enableInternalStopInterrupt;
 
 // Non-interrupt causing flags
-static word1  sector0Flag;
+static word1  sector0Flag;  // XXX unimpl.
 
 // General registers
 static word1  lightPenEnable;
@@ -127,14 +132,14 @@ static word13 yPosition;
 static word12 displayAddressCounter; // Plus breakField for 15 bits 
 static word1  controlStateFlag; /* 0: data state, 1: control state */
 static word3  breakField;
-static word1  byteFlipFlop;
-static word2  scale;
+static word1  byteFlipFlop; // XXX unimpl
+static word2  scale; // XXX unimpl
 static word3  mode;
-static word3  intensity;
-static word1  blink;
+static word3  intensity; // XXX unimpl
+static word1  blink; // XXX unimpl
 static word12 pushButtons;
-static word12 slaveGroup1;
-static word12 slaveGroup2;
+static word12 slaveGroup1; // XXX unimpl
+static word12 slaveGroup2; // XXX unimpl
 
 // Status register 1 bit fields
 #define SR1_LPHF   04000  // Light pen hit
@@ -165,6 +170,8 @@ static word1 cgCharacterByte;
 static word1 cgCase;
 static word1 cgCodeSize;
 static word6 cgStartingAddressRegister;
+static word6 cgCharacterSave;
+static word1 cgMode; // 0 increment, 1 short vector
 
 #define CG_ACT  04000
 #define CG_CB   02000
@@ -180,7 +187,7 @@ static word1  disableLightPenOnResume;
 static word1  lightPenBehavior;
 static word2  xDimension;
 static word2  yDimension;
-static word1  intensifyAllPoints;
+static word1  intensifyAllPoints; // XXX unimpl
 static word1  inhibitEdgeFlags;
 static word1  breakRequestFlag; /* This is the run/stop bit */
 
@@ -245,11 +252,37 @@ static char * states [] = {
   "dataExecutionWait",
 };
 
+static char * opcodes [8] =
+  {
+    "parameter",
+    "mode",
+    "jump",
+    "pop",
+    "skip",
+    "skip2",
+    "misc",
+    "spare"
+  };
+
+static char * datacodes [8] =
+  {
+    "point",
+    "increment",
+    "vector",
+    "vector continue",
+    "short vector",
+    "character",
+    "graphplot",
+    "unused"
+  };
+
 static enum d8_state state;
 /* sub-state flags */
 static word12 instrBuf;
 static word12 instrBuf2;
 static word12 popbuf;
+
+int32 d8_lpApt = 5;
 
 int32 d8_05 (int32 IR, int32 AC);
 int32 d8_06 (int32 IR, int32 AC);
@@ -261,7 +294,7 @@ int32 d8_16 (int32 IR, int32 AC);
 int32 d8_17 (int32 IR, int32 AC);
 int32 d8_30 (int32 IR, int32 AC);
 t_stat d8_svc (UNIT *uptr);
-t_stat d8_reset (DEVICE *dptr);
+static t_stat d8_reset (DEVICE *dptr);
 //t_stat d8_attach (UNIT *uptr, char *cptr);
 //t_stat d8_detach (UNIT *uptr);
 
@@ -321,13 +354,43 @@ MTAB d8_mod[] = {
     { 0 }
     };
 
-DEVICE d8_dev = {
-    "D8", &d8_unit, d8_reg, d8_mod,
-    1, 10, 31, 1, 8, 8,
-    NULL, NULL, &d8_reset,
-    NULL, NULL/*&d8_attach*/, NULL/*&d8_detach*/,
-    &d8_dib, DEV_DISABLE
-    };
+#define DBG_TRACE       (1U << 0)    // instruction trace
+#define DBG_IOT         (2U << 0)    // IOT trace
+#define DBG_STATE       (3U << 0)    // state trace
+#define DBG_DRAW        (4U << 0)    // graphics trace
+
+static DEBTAB d8_dt [] =
+  {
+    { "TRACE",  DBG_TRACE }, // Trace display list instructions
+    { "IOT",    DBG_IOT },   // Trace IOTs
+    { "STATE",  DBG_STATE }, // Trace display engine state
+    { "DRAW",   DBG_DRAW },  // Trace graphics
+    NULL
+  };
+
+DEVICE d8_dev =
+  {
+    "D8",
+    & d8_unit,
+    d8_reg,
+    d8_mod,
+    1,
+    10,
+    31,
+    1,
+    8,
+    8,
+    NULL,
+    NULL,
+    & d8_reset,
+    NULL,
+    NULL,
+    NULL,
+    & d8_dib,
+    DEV_DISABLE | DEV_DEBUG,
+    0,
+    d8_dt
+  };
 
 /* Unit service */
 
@@ -344,9 +407,8 @@ else { printf ("cnt %d tmxr_poll %d\r\n", cnt, tmxr_poll); cnt = 0; last = now;}
 //sim_clock_coschedule (uptr, refresh_rate);                 /* continue poll */
 sim_activate (uptr, tmxr_poll/refresh_rate/**tmxr_poll*/);                 /* continue poll */
 
-close_page ();
-open_page (1);
-handle_input ();
+refreshDisplay ();
+handleInput ();
 return SCPE_OK;
 }
 
@@ -380,7 +442,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
 
     case 1:                                             /* RDPD */
         // RDPD 6051 Read Push Down Pointer
-        sdbg ("IOT RDPD %04o\n", AC | pushDownPtr);
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RDPD");
         // A 1s (inclusive OR) transfer from the push down pointer
         // (12 bits) to the AC is done
         return AC | pushDownPtr;
@@ -390,11 +452,13 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         // A 1s transfer from the x position register to the AC is done.
         // Only the low order 12 (of 13) bits are transferred; the high
         // order bit must be obtained from the RS2 instruction
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RXP");
         return xPosition;
 
     case 4:                                             /* RYP */
         // RYP 6054 Read y Position Register
         // Same as RXP, except the y position register is transferred.
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RYP");
         return yPosition;
     }
 
@@ -408,8 +472,8 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
     case 1:                                             /* RDAC */
         // RDAC 6061 Read Display Address Counter
         // The contents of the display address counter are transferred
-        // from the display to the AC. The DAC will be set at the next
-        // command to be executed by the display XXX ???
+        // from the display to the AC. 
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RDAC");
         AC = displayAddressCounter;
         break;
 
@@ -434,6 +498,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         //        Contents of break field register. These three bits and the
         //        12 bits from the RDAC instruction gice the full 15-bit 
         //        memory address.
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RS1");
         AC =
           (lightPenHitFlag      ? SR1_LPHF : 0) |
           (verticalEdgeFlag     ? SR1_VEF  : 0) |
@@ -461,6 +526,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         // is obtained from the RCG (IOT 304) instruction. The low twelve
         // bits of the 13-bit x and y position register are obtained by giving
         // RXP or RYP.
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RS2");
         AC =
           (byteFlipFlop         ? SR2_BFF  : 0) |
           (lightPenEnable       ? SR2_LPE  : 0) |
@@ -481,6 +547,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         // The contents of the twelve push buttons (0-11) are transferred
         // into the corresponding AC bits.
 //printf ("rpb %04o\r\n", pushButtons & 07777);
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RPB");
         return pushButtons & 07777;
 
     case 2:                                             /* RSG1 */
@@ -496,12 +563,14 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         //  3,4,5   Same format as above for slave 1.
         //  6,7,8   Same format as above for slave 2.
         //  9,10,11 Same format as above for slave 3.
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RSG1");
         return slaveGroup1;
 
     case 4:                                             /* RSG2 */
         // RSG2 6074 Read Slave Group 2
         // RSG2 has the same format as RSG1, except it reads status of
         // slaves 4,5,6, and 7.
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RSG2");
         return slaveGroup2;
     }
 return AC;
@@ -513,6 +582,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
 
     case 2:                                             /* SLPP */
         // SLPP 6132 Skip on Light Pen Hit Flag
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "SLPP");
         return lightPenHitFlag ? IOT_SKP | AC : AC;
 
     case 5:                                             /* SPDP */
@@ -520,6 +590,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         // The contents of the AC are transferred into the PDP register.
         // Since the PDP is a 12-bit register, the PDP list must reside
         // in the first 4K of memory.
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "SPDP");
         pushDownPtr = AC & 07777;
         return AC;
     }
@@ -530,13 +601,14 @@ int32 d8_14 (int32 IR, int32 AC)
 {
 switch (IR & 07) {                                      /* decode IR<9:11> */
 
-    case 2:                                             /* SLPP */
+    case 2:                                             /* SPSP */
         // SPSP 6142 Skip on Slave Light Pen Hit Flag
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "SPSP");
         return ((slaveGroup1 & 0111) | (slaveGroup2 & 0111)) ? IOT_SKP + AC: AC;
 
     case 5:                                             /* SIC */
         // SIC 6145 Set Initial Conditions
-        sdbg ("IOT SIC %04o\n", AC);
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "SIC");
         // Set interrupt enable flags, paper size and light pen conditions.
         enableEdgeFlagInterrupt = (AC & SIC_EFI) ? 1 : 0;
         enableLightPenFlagInterrupt = (AC & SIC_ELPI) ? 1 : 0;
@@ -549,8 +621,6 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         enablePushButtonHitInterrupt = (AC & SIC_EPBI) ? 1 : 0;
         enableInternalStopInterrupt = (AC & SIC_EISI) ? 1 : 0;
         updateInterrupt ();
-        // XXX Guessing
-        xPosition = yPosition = 0;
         return AC;
     }
 return AC;
@@ -602,12 +672,14 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         // SPES 6151 Skip on External Stop Flag
         // This is one of the microprogrammed IOTs and requires bits 0 and 
         // 4 of the AC to be 0 when the IOT is given.
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "SPES");
         if (AC & 04200)
           return AC;
         return externalStopFlag ? IOT_SKP + AC: AC;
 
     case 2:                                             /* SPEF */
         // SPEF 6152 Skip on Edge Flag
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "SPEF");
         return (verticalEdgeFlag | horizontalEdgeFlag) ? IOT_SKP + AC: AC;
 
     case 4:                                             /* STPD */
@@ -616,6 +688,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         // the display has stopped. This is one of the microprogrammed
         // IOTs and requires bits 0 and 4 of the AC to be 0 when the IOT
         // is given.
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "STPD");
         if (AC & 04200)
           return AC;
         signalExternalStop = 1;
@@ -623,7 +696,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         
     case 5:                                             /* LBF */
         // LBF 6155 Load Break field
-        sdbg ("IOT LBF %04o\n", AC);
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "LBF");
         if (AC & LBF_BFE) { // Is change break field set?
             breakField = (AC >> LBF_BF_SHIFT) & 07;
         }
@@ -654,6 +727,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         // CFD 6161 Clear Display Flags
         // CFD clears the four flags that stop the display. ... (internal
         // and external stop, light pen hit, and edge)
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "CFD");
         internalStopFlag = 0;
         externalStopFlag = 0;
         lightPenHitFlag = 0;
@@ -667,6 +741,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
 
     case 4:                                             /* RES2 */
         // RES2 6164 Resume After Stop Code
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RES2");
         if (AC)
             return AC; // "The AC must be zero before RES2 is given
         breakRequestFlag = 1; // Start the display
@@ -675,7 +750,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
 
     case 5:                                             /* INIT */
         // INIT 6165 Initialize the display
-        sdbg ("IOT INIT %04o\n", AC);
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "INIT");
         displayAddressCounter = AC & 07777;
         breakRequestFlag = 1; // Start the display
         int_enable = int_enable | INT_LPT;              /* set enable */
@@ -692,11 +767,13 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
 
     case 1:                                             /* SPES */
         // SPSF 6171 Skip on Internal Stop Flag
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "SPSF");
         return internalStopFlag ? IOT_SKP + AC: AC;
 
 
     case 2:                                             /* SPMI */
         // SPMI 6172 Skip on Manual Interrupt
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "SPMI");
         if (manualInterruptFlag)
           AC |= IOT_SKP;
         manualInterruptFlag = 0;
@@ -706,6 +783,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
     case 4:                                             /* RES1 */
 //printf ("RES1\r\n");
         // RES1 6174 Resume After Light Pen Hit, Edge, or External Stop Flag
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RES1");
         if (lightPenHitFlag || verticalEdgeFlag || horizontalEdgeFlag ||
           externalStopFlag) {
             lightPenHitFlag = 0;
@@ -728,6 +806,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
 
     case 3:                                             /* SCG */
         // SCG 6303 Set Character Generator
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "SCG");
         cgCase = (AC & SCG_CASE) ? 1 : 0;
         cgCodeSize = (AC & SCG_CHSZ) ? 1 : 0;
         cgStartingAddressRegister = AC & SCG_SAR;
@@ -736,8 +815,9 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
     case 4:                                             /* RCG */
         // RCG 6304 Read Character Generator
         // RCG reads in the five character generator parameters: character
-        // generator actce (CHACT), character byte (CB), case, code size
+        // generator active (CHACT), character byte (CB), case, code size
         // (CHSZ), and starting address register (SAR).
+        sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "RCG");
         return
           (cgActive ? CG_ACT : 0) |
           (cgCharacterByte ? CG_CB : 0) |
@@ -752,59 +832,61 @@ return AC;
 
 static int graphicsInited = 0;
 
-t_stat d8_reset (DEVICE *dptr)
-{
-if (graphicsInited == 0) {
-  int argc = 0;
-  char ** argv = NULL;
-  int windowSize = 0; // 0 large, 1 small
-  int usePixmap = 0;
-  int lineWidth = 0;
-  static char * windowName = "338";
-  init_graphics (argc, argv, windowSize, usePixmap, lineWidth, windowName);
-  open_page (1);
-  graphicsInited = 1;
-  //d8_unit.wait=1;
-  sim_activate (&d8_unit, tmxr_poll/refresh_rate/**tmxr_poll*/);               /* activate */
+static t_stat d8_reset (DEVICE * dptr)
+  {
+    if (graphicsInited == 0)
+      {
+        int argc = 0;
+        char ** argv = NULL;
+        int windowSize = 0; // 0 large, 1 small
+        int usePixmap = 0;
+        int lineWidth = 0;
+        static char * windowName = "338";
+        initGraphics (argc, argv, windowSize, lineWidth, windowName);
+        drawSegment (0, 0, 0, 0, 0);
+        flushDisplay ();
+        graphicsInited = 1;
+        //d8_unit.wait=1;
+        sim_activate (& d8_unit, tmxr_poll / refresh_rate);
+      }
 
-}
+    // 2.3.2.8 "The power clear pulse (START key) also clears all display flags.
+    // All display flags cat be cleared by giving three IOTs: CFD-6161 (internal
+    // and external stop, light pen high, and edge); RS1-6062 (push button); 
+    // and SPMI-6172 (manual interrupt).
+    // CFD
+    internalStopFlag = 0;
+    externalStopFlag = 0;
+    lightPenHitFlag = 0;
+    verticalEdgeFlag = 0;
+    horizontalEdgeFlag = 0;
+    // RS1-6062 makes no sense
+    pushButtons = 0;
+    // SPMI-6172 makes no sense
+    manualInterruptFlag = 0;
 
-// 2.3.2.8 "The power clear pulse (START key) also clears all display flags.
-// All display flags cat be cleared by giving three IOTs: CFD-6161 (internal
-// and external stop, light pen high, and edge); RS1-6062 (push button); and 
-// SPMI-6172 (manual interrupt).
-// CFD
-internalStopFlag = 0;
-externalStopFlag = 0;
-lightPenHitFlag = 0;
-verticalEdgeFlag = 0;
-horizontalEdgeFlag = 0;
-// RS1-6062 makes no sense
-pushButtons = 0;
-// SPMI-6172 makes no sense
-manualInterruptFlag = 0;
+    state = instructionState;
+    controlStateFlag = 1;
+    signalExternalStop = 0;
 
-state = instructionState;
-controlStateFlag = 1;
-signalExternalStop = 0;
+    blink = 0;
+    //xPosition = 0;
+    //yPosition = 0;
 
-blink = 0;
+    dev_done = dev_done & ~INT_D8;                     /* clear done, int */
+    int_req = int_req & ~INT_D8;
+    int_enable = int_enable | INT_D8;                      /* set enable */
 
-dev_done = dev_done & ~INT_D8;                         /* clear done, int */
-int_req = int_req & ~INT_D8;
-int_enable = int_enable | INT_D8;                      /* set enable */
-
-
-return SCPE_OK;
-}
+    return SCPE_OK;
+  }
 
 // Interface to the vector H/W
 
-void draw_line (int x1, int y1, int x2, int y2, unsigned long color);
 static void drawPoint (word13 x, word13 y, word1 beamOn)
   {
-    sdbg ("draw point at x %d y %d on %d\n", x, y, beamOn);
-    draw_line (x, y, x, y, 0xffffff);
+    sim_debug (DBG_DRAW, & d8_dev, "draw point at x %d y %d on %d\n", x, y, beamOn);
+    if (beamOn)
+      drawSegment (x, y, x, y, 0xff);
     xPosition = x;
     yPosition = y;
   }
@@ -817,7 +899,7 @@ static void drawIncrement (word3 dir, word2 n, word1 beamOn)
     switch (dir)
       {
         case 0: dx = +n;          break;
-        case 1: dx = +n; dy =+ n; break;
+        case 1: dx = +n; dy = +n; break;
         case 2:          dy = +n; break;
         case 3: dx = -n; dy = +n; break;
         case 4: dx = -n;          break;
@@ -825,12 +907,13 @@ static void drawIncrement (word3 dir, word2 n, word1 beamOn)
         case 6:          dy = -n; break;
         case 7: dx = +n; dy = -n; break;
       }
-    sdbg ("draw increment dir %d (%d, %d) n %d on %d\n", dir, dx, dy, n, beamOn);
-    //printf ("draw increment dir %d (%d, %d) n %d on %d\r\n", dir, dx, dy, n, beamOn);
+    sim_debug (DBG_DRAW, & d8_dev, "draw increment dir %d (%d, %d) n %d on %d\n", dir, dx, dy, n, beamOn);
+    sim_debug (DBG_DRAW, & d8_dev, "draw from %d,%d to %d,%d on %d\n", xPosition, yPosition, xPosition + dx, yPosition + dy, beamOn);
 #if 0
-    draw_line (xPosition, yPosition, (xPosition + dx) & 01777, (yPosition + dy) & 01777, 0xffffff);
+    drawSegment (xPosition, yPosition, (xPosition + dx) & 01777, (yPosition + dy) & 01777, 0xffffff);
 #else
-    draw_line (xPosition, yPosition, xPosition + dx, yPosition + dy, 0xffffff);
+    if (beamOn)
+      drawSegment (xPosition, yPosition, xPosition + dx, yPosition + dy, 0xff);
 #endif
     xPosition = (xPosition + dx) & 01777;
     yPosition = (yPosition + dy) & 01777;
@@ -838,23 +921,189 @@ static void drawIncrement (word3 dir, word2 n, word1 beamOn)
 
 static void drawVector (word13 x, word13 y, word1 beamOn, int con)
   {
+    if (con)
+      sim_printf ("drawVector ignoring con\n");
     // XXX deal with con
-    sdbg ("draw vector to x %d y %d on %d (con %d)\n", x, y, beamOn, con);
+    // if con
+    //   l = len (v)
+    //   if l == 0 skip
+    //   scale vector so that it extends beyond screen
+    //   for each edge of the screen see if it intersects
+    //   if so, shorten it.
+    sim_debug (DBG_DRAW, & d8_dev, "draw from %d,%d to %d,%d on %d\n", xPosition, yPosition, x, y, beamOn);
     //printf ("draw vector to x %d y %d on %d (con %d)\r\n", x, y, beamOn, con);
-    draw_line (xPosition, yPosition, x, y, 0xffffff);
+    if (beamOn)
+      drawSegment (xPosition, yPosition, x, y, 0xff);
     xPosition = x;
     yPosition = y;
   }
 
+static void incrDraw (word12 instr)
+  {
+    word1 beamOn1 = (instr & 04000) ? 1 : 0;
+    word2 nMoves1 = (instr >> 9) & 03;
+    word3 dir1 = (instr >> 6) & 07;
+    drawIncrement (dir1, nMoves1, beamOn1);
+    if (nMoves1 != 0)
+      {
+        word1 beamOn2 = (instr & 00040) ? 1 : 0;
+        word2 nMoves2 = (instr >> 3) & 03;
+        word3 dir2 = instr & 07;
+        drawIncrement (dir2, nMoves2, beamOn2);
+      }
+  }
+
+static void shortVec (word12 instr)
+  {
+    word1 beamOn = (instr & 04000) ? 1 : 0;
+    word10 dy = (instr >> 6) & 017;
+    word1 sy = (instr & 02000) ? 1 /* + */ : 0 /* - */;
+    word10 dx = (instr >> 0) & 017;
+    word1 sx = (instr & 00020) ? 1 /* + */ : 0 /* - */;
+
+    sim_debug (DBG_DRAW, & d8_dev, "draw short %04o on %d dx 0%04o (%d.) sx %o dy 0%04o (%d.) sy %o\n", instr, beamOn, dx, dx, sx, dy, dy, sy);
+    word13 x, y;
+
+    if (sx)
+      x = (xPosition + dx) & 017777;
+    else
+      x = (xPosition - dx) & 017777;
+
+    if (sy)
+      y = (yPosition + dy) & 017777;
+    else
+      y = (yPosition - dy) & 017777;
+
+    drawVector (x, y, beamOn, 0);
+  }
+
 static void drawChar (word7 ch)
   {
-    sdbg ("draw char %d\n", ch);
+    sim_debug (DBG_DRAW, & d8_dev, "draw char 0%o (%d.)\n", ch, ch);
     // XXX deal with dx/dy
+    word15 CHAC = (cgStartingAddressRegister << 9) | ch;
+    if (cgCodeSize == 0 && cgCase) // Six bit chars
+      CHAC |= 0000100;
+
+    word12 dispatch = M [CHAC];
+    sim_debug (DBG_DRAW, & d8_dev, "dispatch %05o %04o\n", CHAC, dispatch);
+    if ((dispatch & 04000) == 0) // Dispatch word?
+      {
+        word1 dmode = (dispatch & 02000) ? 1 : 0;
+        CHAC &= 077000;
+        CHAC |= dispatch & 01777; // The '1' is correct; bit 5 of the CHAC
+                                  // is the OR of dispatch bit 2 and SAR bit 5
+
+        sim_debug (DBG_DRAW, & d8_dev, "dispatch to %05o\n", CHAC);
+        // Loop over data
+        while (1)
+          {
+            word12 data = M [CHAC];
+            sim_debug (DBG_DRAW, & d8_dev, "char data %05o %04o\n", CHAC, data);
+            CHAC = (CHAC + 1) % 077777;
+            if (dmode) // Short vector
+              {
+                shortVec (data);
+                if (data & 00040) // Escape
+                  return;
+              }
+            else
+              {
+                incrDraw (data);
+                if ((data & 03000) == 0 || // Escape in first half
+                    (data & 00030) == 0) // Escape in second half
+                  return;
+              }
+          }
+      }
+    else // Control word
+      {
+        word3 opc = (dispatch >> 9) & 03;
+        sim_debug (DBG_DRAW, & d8_dev, "control %o\n", opc);
+        switch (opc)
+          {
+            case 00: // Parameter control
+              {
+                if (dispatch & 00400) // Enable scale change
+                  scale = (dispatch >> 6) & 03;
+                if (dispatch & 00040) // Enable light pen change
+                  lightPenEnable = (dispatch & 00020) ? 1 : 0;
+                if (dispatch & 00010)
+                  intensity = dispatch & 00007;
+                break;
+              } // case parameter control
+
+            case 01: // Table control
+              {
+                cgCase = (dispatch & 00400) ? 1 : 0;
+                if (dispatch & 00200) // Eanble SAR 0-2
+                  {
+                    cgStartingAddressRegister &= 007;
+                    cgStartingAddressRegister |= dispatch & 00070;
+                  }
+                if (dispatch & 00100) // Enable SAR 3-5
+                  {
+                    cgStartingAddressRegister &= 070;
+                    cgStartingAddressRegister |= dispatch & 00007;
+                  }
+                break;
+              } // case table control
+
+            case 02: // misc. control
+              {
+                if (dispatch & 00400) // Enable code size
+                  cgCodeSize = (dispatch & 00200) ? 1 : 0;
+                if (dispatch & 00100) // CR
+                  {
+                    sim_debug (DBG_DRAW, & d8_dev, "CR; x was %05o\n", xPosition);
+                    xPosition &= 016000; // Clear lower 10 bits of X position
+                    sim_debug (DBG_DRAW, & d8_dev, "CR; x now %05o\n", xPosition);
+                  }
+// The docs don't say what it means to both set control parameters and esacpe
+                if (dispatch & 00040) // Escape
+                  {
+                    state = instructionState;
+                    return;
+                  }
+                if (dispatch & 00040) // Enable count scale
+                  {
+                    if (dispatch & 00020) // count down
+                      {
+                        if (scale > 0)
+                          scale --;
+                      }
+                    else // count up
+                      {
+                        if (scale < 3)
+                          scale ++;
+                      }
+                    sim_debug (DBG_DRAW, & d8_dev, "scale now %o\n", scale);
+
+                  }
+                if (dispatch & 00010) // Enable count intensity
+                  {
+                    if (dispatch & 00004) // count down
+                      {
+                        if (intensity > 0)
+                          intensity --;
+                      }
+                    else // count up
+                      {
+                        if (intensity < 3)
+                          intensity ++;
+                      }
+                  }
+                break;
+              } // misc. control
+
+            case 03: // Unused
+              break;
+
+          } // switch (opc)
+      } // control word
   }
 
 // Step the display processor
-
-extern uint16 M[];
 
 static word12 dacwas; // debugging
 
@@ -863,7 +1112,8 @@ void sim_instr_d8 (void)
     if (! breakRequestFlag)
       return;  // Not running.
 
-    sdbg ("d8 state %s\n", states [state]);
+    sim_debug (DBG_TRACE, & d8_dev, "%o %04o %04o s %s\n", breakField, dacwas, instrBuf, states [state]);
+
     switch (state)
       {
         case instructionState:
@@ -926,6 +1176,7 @@ void sim_instr_d8 (void)
 
         case instructionFetchComplete:
           {
+            sim_debug (DBG_TRACE, & d8_dev, "%o %04o %04o i %s\n", breakField, dacwas, instrBuf, opcodes [(instrBuf > 9) & 07]);
 //printf ("i %04o %04o\r\n", dacwas, instrBuf); 
             state = instructionState; // Set default state transition
 
@@ -937,7 +1188,9 @@ void sim_instr_d8 (void)
                   if (instrBuf & 00400) // Enable scale change
                     scale = (instrBuf >> 6) & 03;
                   if (instrBuf & 00040) // Enable light pen change
-                    lightPenEnable = (instrBuf >> 6) & 03;
+                    lightPenEnable = (instrBuf & 00020) ? 1 : 0;
+                  if (instrBuf & 00010)
+                    intensity = instrBuf & 00007;
                   break;
 
                 case 1: // Mode
@@ -962,7 +1215,10 @@ void sim_instr_d8 (void)
                     }
 
                   if (instrBuf & 00100) // Enable mode change
-                    mode = (instrBuf >> 3) & 07;
+                    {
+                      mode = (instrBuf >> 3) & 07;
+                      sim_debug (DBG_TRACE, & d8_dev, "mode set to %o %s\n", mode, datacodes [mode]);
+                    }
 
                   if (instrBuf & 00004) // Clear high order position bits
                     {
@@ -997,7 +1253,7 @@ void sim_instr_d8 (void)
                   if (instrBuf & 00400) // Enable scale change
                     scale = (instrBuf >> 6) & 03;
                   if (instrBuf & 00040) // Enable light pen change
-                    lightPenEnable = (instrBuf >> 6) & 03;
+                    lightPenEnable = (instrBuf & 00020) ? 1 : 0;
                   if (instrBuf & 00010) // Push Jump
                     {
                       // Save the first word, switch to midPush state
@@ -1176,7 +1432,7 @@ void sim_instr_d8 (void)
             if (instrBuf & 00400) // Enable scale change
               scale = (instrBuf >> 6) & 03;
             if (instrBuf & 00040) // Enable light pen change
-              lightPenEnable = (instrBuf >> 6) & 03;
+              lightPenEnable = (instrBuf & 00020) ? 1 : 0;
 
             breakField = popbuf2 & 03;
             displayAddressCounter = popbuf & 07777;
@@ -1240,6 +1496,7 @@ void sim_instr_d8 (void)
         case dataFetchComplete:
           {
 //printf ("d %04o %04o %d\r\n", dacwas, instrBuf, mode); 
+            sim_debug (DBG_TRACE, & d8_dev, "%o %04o %04o d %s\n", breakField, dacwas, instrBuf, datacodes [mode]);
             switch (mode)
               {
                 case 0: // Point
@@ -1257,20 +1514,8 @@ void sim_instr_d8 (void)
                   } // case (point)
 
                 case 1: // Increment
-                  {
-                    word1 beamOn1 = (instrBuf & 04000) ? 1 : 0;
-                    word2 nMoves1 = (instrBuf >> 9) & 03;
-                    word3 dir1 = (instrBuf >> 6) & 07;
-                    drawIncrement (dir1, nMoves1, beamOn1);
-                    if (nMoves1 != 0)
-                      {
-                        word1 beamOn2 = (instrBuf & 00040) ? 1 : 0;
-                        word2 nMoves2 = (instrBuf >> 3) & 03;
-                        word3 dir2 = instrBuf & 07;
-                        drawIncrement (dir2, nMoves2, beamOn2);
-                      }
-                    break;
-                  }
+                  incrDraw (instrBuf);
+                  break;
 
                 case 2: // Vector
                 case 3: // Vector Continue
@@ -1300,43 +1545,23 @@ void sim_instr_d8 (void)
                   break;
 
                 case 4: // Short Vector
-                  {
 //printf ("svec\r\n");
-                    word1 beamOn = (instrBuf & 04000) ? 1 : 0;
-                    word10 dy = (instrBuf >> 6) & 017;
-                    word1 sy = (instrBuf & 02000) ? 1 /* + */ : 0 /* - */;
-                    word10 dx = (instrBuf >> 0) & 017;
-                    word1 sx = (instrBuf & 00020) ? 1 /* + */ : 0 /* - */;
-
-                    word13 x, y;
-
-                    if (sx)
-                      x = (xPosition + dx) & 017777;
-                    else
-                      x = (xPosition - dx) & 017777;
-
-                    if (sy)
-                      y = (yPosition + dy) & 017777;
-                    else
-                      y = (yPosition - dy) & 017777;
-
-                    drawVector (x, y, beamOn, 0);
-                    break;
-                  } // case (short vector)
+                  shortVec (instrBuf);
+                  break;
 
                 case 5: // Character
                   {
+                    cgCharacterByte = 0;
                     if (cgCodeSize) // Set is 7 bit
                       {
                         word7 ch = instrBuf & 00177;
-                        // XXX draw char (ch)
+                        drawChar (ch);
                       }
                     else
                       {
                         word7 ch1 = (instrBuf >> 6) & 00077;
-                        word7 ch2 = (instrBuf >> 0) & 00077;
-                        // XXX draw char (ch1)
-                        // XXX draw char (ch2)
+                        cgCharacterSave = (instrBuf >> 0) & 00077;
+                        drawChar (ch1);
                       }
                     break;
                   } // case (character)
@@ -1369,6 +1594,7 @@ void sim_instr_d8 (void)
 
         case dataExecutionWait:
           {
+            sim_debug (DBG_TRACE, & d8_dev, "dataExecutionWait mode %o %s\n", mode, datacodes [mode]);
             switch (mode)
               {
                 case 0: // Point
@@ -1415,6 +1641,27 @@ void sim_instr_d8 (void)
                   } // case point
 
                 case 5: // Character
+                  {
+                    if (cgCodeSize) // 7 bit?
+                      {
+                        sim_debug (DBG_TRACE, & d8_dev, "character 7bit; done\n");
+                        state = dataState; // no 2nd char in 7 bit mode, so done
+                        break;
+                      }
+                    if (cgCharacterByte)  // 2nd char done?
+                      {
+                        sim_debug (DBG_TRACE, & d8_dev, "character 6bit, 2nd done\n");
+                        state = dataState; // done
+                        break;
+                      }
+                    sim_debug (DBG_TRACE, & d8_dev, "character 6bit, 1st done\n");
+                    cgCharacterByte = 1;
+                    drawChar (cgCharacterSave);
+                    sim_debug (DBG_TRACE, & d8_dev, "character 6bit, 2nd done\n");
+                    // stay in dataExecutionWait state
+                    break;
+                  } // case character
+
                 case 7: // Unused Can't happen -- mode is verifed on entry to data state.
                   state = dataState;
                   break;
@@ -1427,7 +1674,7 @@ void sim_instr_d8 (void)
 
 /* x11 callbacks */
 
-void lp_hit (void)
+void lpHit (void)
   {
     lightPenHitFlag = 1; // signal the engine
     updateInterrupt ();
@@ -1435,7 +1682,7 @@ void lp_hit (void)
     //sim_printf ("lp hit\r\n");
   }
 
-void btn_press (int n)
+void btnPress (int n)
   {
     if (n < 0 || n > 11)
       return;
