@@ -51,8 +51,8 @@ static int windowWidth, windowHeight;
 static int lightPenX = 0, lightPenY = 0, lightPenZ = 0;
 static int needRedraw = 0;
 
-void btnPress (int n);
-void lpHit (void);
+static void (* btnPress) (int n);
+static void (* lpHit) (void);
 
 void handleInput (void)
   {
@@ -81,51 +81,63 @@ void handleInput (void)
                 switch (keysym)
                   {
                     case XK_1:
-                      btnPress (0);
+                      if (btnPress)
+                        btnPress (0);
                       break;
 
                     case XK_2:
-                      btnPress (1);
+                      if (btnPress)
+                        btnPress (1);
                       break;
 
                     case XK_3:
-                      btnPress (2);
+                      if (btnPress)
+                        btnPress (2);
                       break;
 
                     case XK_4:
-                      btnPress (3);
+                      if (btnPress)
+                        btnPress (3);
                       break;
 
                     case XK_5:
-                      btnPress (4);
+                      if (btnPress)
+                        btnPress (4);
                       break;
 
                     case XK_6:
-                      btnPress (5);
+                      if (btnPress)
+                        btnPress (5);
                       break;
 
                     case XK_7:
-                      btnPress (6);
+                      if (btnPress)
+                        btnPress (6);
                      break;
 
                     case XK_8:
-                      btnPress (7);
+                      if (btnPress)
+                        btnPress (7);
                       break;
 
                     case XK_9:
-                      btnPress (8);
+                      if (btnPress)
+                        btnPress (8);
                       break;
 
                     case XK_0:
-                      btnPress (9);
+                      if (btnPress)
+                        btnPress (9);
                       break;
 
                     case XK_minus:
-                      btnPress (10);
+                      if (btnPress)
+                        btnPress (10);
                       break;
 
                     case XK_equal:
-                      btnPress (11);
+                      if (btnPress)
+                        btnPress (11);
                       break;
                   } // switch (keysym)
               } // case keypress
@@ -159,8 +171,11 @@ void handleInput (void)
   }
 
 void initGraphics (char * dispname, int argc, char * argv [], int windowSizeScale_,
-                   int lineWidth_, char * windowName)
+                   int lineWidth_, char * windowName, 
+                   void (* lpHitp) (void), void (* btnPressp) (int n))
   {
+    lpHit = lpHitp;
+    btnPress = btnPressp;
     XSizeHints myhint;
     int myscreen;
 
@@ -276,7 +291,7 @@ void drawLine (int x0, int y0, int x1, int y1, unsigned long intensity)
       {
         if ((x0 == x1) && (y0 == y1))
           x1++;
-        pixel = intensity << 16 | intensity < 8 | intensity;
+        pixel = (intensity << 16) | (intensity << 8) | (intensity << 0);
         if (pixel != lastPixel)
           {
             XSetForeground (d, mygc, pixel);
@@ -429,7 +444,8 @@ void drawSegment (uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t i
       {
         int d = dist (x0, y0, x1, y1, lightPenX, lightPenY);
         if (d < d8_lpApt)
-          lpHit ();
+          if (lpHit)
+            lpHit ();
       }
     long tnow = t ();
     entry * p = head;

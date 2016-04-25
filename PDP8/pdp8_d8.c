@@ -34,11 +34,14 @@
 // Interface to X11
 
 void initGraphics (char * dispname, int argc, char * argv [], int windowSizeScale_,
-                   int lineWidth_, char * windowName);
+                   int lineWidth_, char * windowName, 
+                   void (* lpHitp) (void), void (* btnPressp) (int n));
 void handleInput (void);
 void drawSegment (uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t intensity);
 void flushDisplay (void);
 void refreshDisplay (void);
+static void lpHit (void);
+static void btnPress (int n);
 
 typedef uint16 word1;
 typedef uint16 word2;
@@ -836,23 +839,6 @@ static int graphicsInited = 0;
 
 static t_stat d8_reset (DEVICE * dptr)
   {
-#if 0
-    if (graphicsInited == 0)
-      {
-        int argc = 0;
-        char ** argv = NULL;
-        int windowSize = 0; // 0 large, 1 small
-        int usePixmap = 0;
-        int lineWidth = 0;
-        static char * windowName = "338";
-        initGraphics (argc, argv, windowSize, lineWidth, windowName);
-        drawSegment (0, 0, 0, 0, 0);
-        flushDisplay ();
-        graphicsInited = 1;
-        //d8_unit.wait=1;
-        sim_activate (& d8_unit, tmxr_poll / refresh_rate);
-      }
-#endif
     // 2.3.2.8 "The power clear pulse (START key) also clears all display flags.
     // All display flags cat be cleared by giving three IOTs: CFD-6161 (internal
     // and external stop, light pen high, and edge); RS1-6062 (push button); 
@@ -893,7 +879,7 @@ static void setupGraphics (void)
         int usePixmap = 0;
         int lineWidth = 0;
         static char * windowName = "338";
-        initGraphics (x11DisplayName, 0, NULL, windowSize, lineWidth, windowName);
+        initGraphics (x11DisplayName, 0, NULL, windowSize, lineWidth, windowName, lpHit, btnPress);
         drawSegment (0, 0, 0, 0, 0);
         flushDisplay ();
         graphicsInited = 1;
@@ -1714,7 +1700,7 @@ void sim_instr_d8 (void)
 
 /* x11 callbacks */
 
-void lpHit (void)
+static void lpHit (void)
   {
     lightPenHitFlag = 1; // signal the engine
     updateInterrupt ();
@@ -1722,7 +1708,7 @@ void lpHit (void)
     //sim_printf ("lp hit\r\n");
   }
 
-void btnPress (int n)
+static void btnPress (int n)
   {
     if (n < 0 || n > 11)
       return;

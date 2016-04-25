@@ -315,6 +315,9 @@ DEVICE cpu_dev = {
     NULL, 0
     };
 
+extern DEVICE d8_dev;
+extern DEVICE vc8i_dev;
+
 t_stat sim_instr (void)
 {
 int32 IR, MB, IF, DF, LAC, MQ;
@@ -343,7 +346,10 @@ while (reason == 0) {                                   /* loop until halted */
             break;
         }
 
-    sim_instr_d8 ();                                    /* Step the display controller */
+    if (! (d8_dev . flags & DEV_DIS))
+      sim_instr_d8 ();                                  /* Step the display controller */
+    if (! (vc8i_dev . flags & DEV_DIS))
+      sim_instr_vc8i ();                                  /* Step the display controller */
 
     if (int_req > INT_PENDING) {                        /* interrupt? */
         int_req = int_req & ~INT_ION;                   /* interrupts off */

@@ -61,11 +61,11 @@ extern DEVICE clk_dev, lpt_dev;
 extern DEVICE rk_dev, rl_dev;
 extern DEVICE rx_dev;
 extern DEVICE d8_dev;
+extern DEVICE vc8i_dev;
 extern DEVICE df_dev, rf_dev;
 extern DEVICE dt_dev, td_dev;
 extern DEVICE mt_dev, ct_dev;
 extern DEVICE ttix_dev, ttox_dev;
-extern DEVICE d8_dev;
 extern REG cpu_reg[];
 extern uint16 M[];
 
@@ -114,6 +114,7 @@ DEVICE *sim_devices[] = {
     &mt_dev,
     &ct_dev,
     &d8_dev,
+    &vc8i_dev,
     NULL
     };
 
