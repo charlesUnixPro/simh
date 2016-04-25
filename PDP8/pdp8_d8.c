@@ -27,12 +27,13 @@
 
 */
 
-#include "pdp8_defs.h"
 #include <stdint.h>
+#include "pdp8_defs.h"
+
 
 // Interface to X11
 
-void initGraphics (int argc, char * argv [], int windowSizeScale_,
+void initGraphics (char * dispname, int argc, char * argv [], int windowSizeScale_,
                    int lineWidth_, char * windowName);
 void handleInput (void);
 void drawSegment (uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t intensity);
@@ -55,6 +56,7 @@ extern int32 int_req, int_enable, dev_done, stop_inst;
 extern int32 tmxr_poll;
 extern int32 saved_PC;                                     /* saved IF'PC */
 
+static char * x11DisplayName = NULL;
 static int refresh_rate = 1;
 DEVICE d8_dev;
 
@@ -293,10 +295,10 @@ int32 d8_15 (int32 IR, int32 AC);
 int32 d8_16 (int32 IR, int32 AC);
 int32 d8_17 (int32 IR, int32 AC);
 int32 d8_30 (int32 IR, int32 AC);
-t_stat d8_svc (UNIT *uptr);
-static t_stat d8_reset (DEVICE *dptr);
-//t_stat d8_attach (UNIT *uptr, char *cptr);
-//t_stat d8_detach (UNIT *uptr);
+t_stat d8_svc (UNIT * uptr);
+static t_stat d8_reset (DEVICE * dptr);
+static t_stat set_display (UNIT * uptr, int32 val, char * cptr, void * desc);
+static t_stat show_display (FILE * st, UNIT * uptr, int32 val, void * desc);
 
 /* D8 data structures
 
@@ -349,8 +351,8 @@ REG d8_reg[] = {
     };
 
 MTAB d8_mod[] = {
-    //{ MTAB_XTD|MTAB_VDV, 0, "DEVNO", "DEVNO",
-      //&set_dev, &show_dev, NULL },
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR|MTAB_QUOTE, 0, "DISPLAY", "DISPLAY",
+      & set_display, & show_display, NULL },
     { 0 }
     };
 
@@ -387,7 +389,7 @@ DEVICE d8_dev =
     NULL,
     NULL,
     & d8_dib,
-    DEV_DISABLE | DEV_DEBUG,
+    DEV_DISABLE | DEV_DIS | DEV_DEBUG,
     0,
     d8_dt
   };
@@ -397,7 +399,7 @@ DEVICE d8_dev =
 t_stat d8_svc (UNIT *uptr)
 {
 //sim_printf ("svc %d %d\n", time(NULL), tmxr_poll);
-#if 1
+#if 0
 static time_t last = 0;
 static int cnt = 0; 
 time_t now = time(NULL);
@@ -834,6 +836,7 @@ static int graphicsInited = 0;
 
 static t_stat d8_reset (DEVICE * dptr)
   {
+#if 0
     if (graphicsInited == 0)
       {
         int argc = 0;
@@ -849,7 +852,7 @@ static t_stat d8_reset (DEVICE * dptr)
         //d8_unit.wait=1;
         sim_activate (& d8_unit, tmxr_poll / refresh_rate);
       }
-
+#endif
     // 2.3.2.8 "The power clear pulse (START key) also clears all display flags.
     // All display flags cat be cleared by giving three IOTs: CFD-6161 (internal
     // and external stop, light pen high, and edge); RS1-6062 (push button); 
@@ -880,6 +883,40 @@ static t_stat d8_reset (DEVICE * dptr)
     return SCPE_OK;
   }
 
+static void setupGraphics (void)
+  {
+    if (graphicsInited == 0)
+      {
+        int argc = 0;
+        char ** argv = NULL;
+        int windowSize = 0; // 0 large, 1 small
+        int usePixmap = 0;
+        int lineWidth = 0;
+        static char * windowName = "338";
+        initGraphics (x11DisplayName, 0, NULL, windowSize, lineWidth, windowName);
+        drawSegment (0, 0, 0, 0, 0);
+        flushDisplay ();
+        graphicsInited = 1;
+        //d8_unit.wait=1;
+// XXX This is in the wrong place
+        sim_activate (& d8_unit, tmxr_poll / refresh_rate);
+      }
+  }
+
+t_stat set_display (UNIT * uptr, int32 val, char * cptr, void * desc)
+  {
+    if (x11DisplayName)
+      free (x11DisplayName);
+    x11DisplayName = strdup (cptr);
+    sim_printf ("Display set to '%s'\n", x11DisplayName);
+    return SCPE_OK;
+  }
+
+t_stat show_display (FILE * st, UNIT * uptr, int32 val, void * desc)
+  {
+    sim_printf ("Display set to '%s'\n", x11DisplayName);
+    return SCPE_OK;
+  }
 // Interface to the vector H/W
 
 static void drawPoint (word13 x, word13 y, word1 beamOn)
@@ -1109,6 +1146,9 @@ static word12 dacwas; // debugging
 
 void sim_instr_d8 (void)
   {
+    if (graphicsInited == 0)
+      setupGraphics ();
+
     if (! breakRequestFlag)
       return;  // Not running.
 

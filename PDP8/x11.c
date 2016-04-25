@@ -49,6 +49,7 @@ static unsigned long black, white;
 static int lineWidth;
 static int windowWidth, windowHeight;
 static int lightPenX = 0, lightPenY = 0, lightPenZ = 0;
+static int needRedraw = 0;
 
 void btnPress (int n);
 void lpHit (void);
@@ -136,21 +137,28 @@ void handleInput (void)
               lightPenY = event.xmotion.y;
               break;
 
-          case ButtonPress:
+            case ButtonPress:
 //printf ("press %d\r\n", event.xbutton.button);
               lightPenZ = 1;
               break;
 
-          case ButtonRelease:
+            case ButtonRelease:
 //printf ("release %d\r\n", event.xbutton.button);
               lightPenZ = 0;
               break;
 
+            case ConfigureNotify:
+              needRedraw = 1;
+              break;
+
+            default:
+              //printf ("event %d\r\n", event.type);
+              break;
           } // switch (event.type)
       }
   }
 
-void initGraphics (int argc, char * argv [], int windowSizeScale_,
+void initGraphics (char * dispname, int argc, char * argv [], int windowSizeScale_,
                    int lineWidth_, char * windowName)
   {
     XSizeHints myhint;
@@ -159,7 +167,7 @@ void initGraphics (int argc, char * argv [], int windowSizeScale_,
     windowSizeScale = windowSizeScale_;
     lineWidth = lineWidth;
 
-    d = XOpenDisplay ("");
+    d = XOpenDisplay (dispname);
     if (!d)
       {
         fprintf (stderr, "Can't init X\n"); 
@@ -196,11 +204,13 @@ void initGraphics (int argc, char * argv [], int windowSizeScale_,
     XSelectInput (d, w,
                   ButtonPressMask | ButtonReleaseMask |
                   KeyPressMask | KeyReleaseMask |
-                  PointerMotionMask);
+                  PointerMotionMask |
+                  StructureNotifyMask);
 
     XMapRaised (d, w);
 
     dirty = 0;
+    needRedraw = 1;
     //lastPixel = white;
   }
 
@@ -287,6 +297,7 @@ static void clearDisplay (void)
 void flushDisplay (void)
   {
     XFlush (d);
+    //XSync (d, false);
   }
 
 //
@@ -319,7 +330,7 @@ static long t (void)
   {
     struct timespec res;
     clock_gettime (CLOCK_MONOTONIC_COARSE, & res);
-    return (res.tv_sec - 1460762856) * 100 + res.tv_nsec / 1000000;
+    return res.tv_sec * 100 + res.tv_nsec / 10000000;
   }
 
 typedef struct entry_
@@ -376,6 +387,7 @@ static void delete (entry * * parent)
 
 void refreshDisplay (void)
   {
+//printf ("%ld %ld\r\n", t (), time (NULL));
     entry * * p =  & head;
     bool change = false;
     long tt = t () - 3; // 3/100ths is about 1/30th.
@@ -389,7 +401,9 @@ void refreshDisplay (void)
         else
           p = & ((* p) -> next);
       }
-    //if (change)
+// XXX Enabling this check causes test1 to have a blank display until the
+// XXX first light pen hit.
+    if (needRedraw || change)
       {
         clearDisplay ();
         //int cnt = 0;
@@ -400,13 +414,15 @@ void refreshDisplay (void)
             //cnt ++;
             q = q -> next;
           }
-        flushDisplay ();
 //printf ("scnt %d\r\n", cnt);
       }
+    flushDisplay ();
+    needRedraw = 0;
   }
 
 void drawSegment (uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t intensity)
   {
+//printf ("%d %d %d %d %d\r\n", x0, y0, x1, y1, intensity);
     y0 = (XHEIGHT >> windowSizeScale) - y0;
     y1 = (XHEIGHT >> windowSizeScale) - y1;
     if (lightPenZ)
@@ -429,7 +445,7 @@ void drawSegment (uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t i
       }
     addLine (x0, y0, x1, y1, intensity);
     drawLine (x0, y0, x1, y1, intensity);
-    flushDisplay ();
+    //flushDisplay ();
   }
 
 
