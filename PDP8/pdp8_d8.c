@@ -428,14 +428,14 @@ static void updateInterrupt (void)
         manualInterruptFlag)
       {
         displayInterruptFlag = 1;
-        dev_done = dev_done | INT_LPT;                          /* set done */
+        dev_done = dev_done | INT_D8;                           /* set done */
         int_req = INT_UPDATE;                                   /* update interrupts */
 
       }
     else
       {
         displayInterruptFlag = 0;
-        int_req = int_req & ~INT_LPT;
+        int_req = int_req & ~INT_D8;
       }
   }
 
@@ -758,7 +758,7 @@ switch (IR & 07) {                                      /* decode IR<9:11> */
         sim_debug (DBG_IOT, & d8_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "INIT");
         displayAddressCounter = AC & 07777;
         breakRequestFlag = 1; // Start the display
-        int_enable = int_enable | INT_LPT;              /* set enable */
+        int_enable = int_enable | INT_D8;               /* set enable */
         int_req = INT_UPDATE;                           /* update interrupts */
         return AC;
     }

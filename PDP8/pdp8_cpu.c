@@ -316,6 +316,7 @@ DEVICE cpu_dev = {
     };
 
 extern DEVICE d8_dev;
+extern DEVICE vc8e_dev;
 extern DEVICE vc8i_dev;
 
 t_stat sim_instr (void)
@@ -348,6 +349,8 @@ while (reason == 0) {                                   /* loop until halted */
 
     if (! (d8_dev . flags & DEV_DIS))
       sim_instr_d8 ();                                  /* Step the display controller */
+    if (! (vc8e_dev . flags & DEV_DIS))
+      sim_instr_vc8e ();                                  /* Step the display controller */
     if (! (vc8i_dev . flags & DEV_DIS))
       sim_instr_vc8i ();                                  /* Step the display controller */
 

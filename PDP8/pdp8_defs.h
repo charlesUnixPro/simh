@@ -100,9 +100,10 @@ typedef struct {
 #define DEV_PTP         002                             /* paper tape punch */
 #define DEV_TTI         003                             /* console input */
 #define DEV_TTO         004                             /* console output */
-#define DEV_D8          000                             /* 335 vector display, devices at */
+#define DEV_D8          000                             /* 338 vector display, devices at */
                                                         /* 005, 006, 007, 013, 014, 015, 016, 017, 030 */
 #define DEV_CLK         013                             /* clock */
+#define DEV_VC8E        000                             /* VC8/E vector display, devices at */
 #define DEV_VC8I        000                             /* VC8/I vector display, devices at */
                                                         /* 005, 006, 007 */
 #define DEV_CLK         013                             /* clock */
@@ -157,9 +158,8 @@ typedef struct {
 #define INT_V_TTI2      (INT_V_START+11)                /* tti2 */
 #define INT_V_TTI3      (INT_V_START+12)                /* tti3 */
 #define INT_V_TTI4      (INT_V_START+13)                /* tti4 */
-#define INT_V_D8        (INT_V_START+14)                /* d8 */
-#define INT_V_VC8I      (INT_V_START+15)                /* vc8/i */
-#define INT_V_DIRECT    (INT_V_START+16)                /* direct start */
+#define INT_V_D8        (INT_V_START+14)                /* d8, vc8/e, vc8/i */
+#define INT_V_DIRECT    (INT_V_START+15)                /* direct start */
 #define INT_V_RX        (INT_V_DIRECT+0)                /* RX8E */
 #define INT_V_RK        (INT_V_DIRECT+1)                /* RK8E */
 #define INT_V_RF        (INT_V_DIRECT+2)                /* RF08 */
@@ -192,7 +192,6 @@ typedef struct {
 #define INT_TTI3        (1 << INT_V_TTI3)
 #define INT_TTI4        (1 << INT_V_TTI4)
 #define INT_D8          (1 << INT_V_D8)
-#define INT_VC8I        (1 << INT_V_VC8I)
 #define INT_RX          (1 << INT_V_RX)
 #define INT_RK          (1 << INT_V_RK)
 #define INT_RF          (1 << INT_V_RF)
@@ -222,6 +221,7 @@ t_stat set_dev (UNIT *uptr, int32 val, char *cptr, void *desc);
 t_stat show_dev (FILE *st, UNIT *uptr, int32 val, void *desc);
 
 void sim_instr_d8 (void);
+void sim_instr_vc8e (void);
 void sim_instr_vc8i (void);
 
 void cpu_set_bootpc (int32 pc);

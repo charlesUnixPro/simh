@@ -61,6 +61,7 @@ extern DEVICE clk_dev, lpt_dev;
 extern DEVICE rk_dev, rl_dev;
 extern DEVICE rx_dev;
 extern DEVICE d8_dev;
+extern DEVICE vc8e_dev;
 extern DEVICE vc8i_dev;
 extern DEVICE df_dev, rf_dev;
 extern DEVICE dt_dev, td_dev;
@@ -114,6 +115,7 @@ DEVICE *sim_devices[] = {
     &mt_dev,
     &ct_dev,
     &d8_dev,
+    &vc8e_dev,
     &vc8i_dev,
     NULL
     };

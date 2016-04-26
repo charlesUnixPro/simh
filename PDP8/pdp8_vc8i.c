@@ -84,241 +84,22 @@ typedef uint16 word15;
 
 static void drawPoint (word12 x, word12 y, word1 beamOn);
 static void lpHit (void);
-static void btnPress (int n);
 
 extern uint16 M[];
 
 extern int32 int_req, int_enable, dev_done, stop_inst;
 extern int32 tmxr_poll;
-extern int32 saved_PC;                                     /* saved IF'PC */
 
 static char * x11DisplayName = NULL;
 static int refresh_rate = 1;
 DEVICE vc8i_dev;
 
-//static int32 vc8i_err = 0;                                      /* error flag */
-//static int32 vc8i_stopioe = 0;                                  /* stop on error */
-
-/* 338 state engine */
-
-/* Status registers */
-
-// 2.3.1.5 Read Status 1: "Display interrupt flag. If the interrupt
-// system is turned on and bit is a 1, the computer will interrupt.
-// It is set by one of the six display flags being on and gated onto
-// the interrupt line.
-// 2.3.2.2 Set Initial Conditions:
-//   Enable edge flag interrupt
-//   Enable light pen flag interrupt
-//   Enable interrupt on push button hit
-//   Enable interrupt on internal stop flag
-//
-// That's 4 (or 5 if you count 'edge' has both H and V).
-//
-// Looking at the example interrupt handler in App. 2:
-//
-//  SPLP light pen flag
-//  SPSF internal stop flag
-//  SPMI manual interrupt
-//  SPEF edge flag
-//  SPES external stop flag
-//  SPSP slave light pen
-//  RS1 and then test for pushbutton flag.
-//
-// That's 7. Sigh.
-//
-// 1.1.9 Flags
-//
-//  Internal stop
-//  External stop
-//  Edge
-//  Light pen
-//  Pushbutton
-//  Manual interrupt
-//
-// Okay, that's 6; the optional slave light pen is the 7th
-// Manual interrupt and push button do not stop the display; the
-// others do.
-//
-
-// The interrupt causing flags
-static word1  internalStopFlag;
-static word1  externalStopFlag;
-static word1  verticalEdgeFlag;  // XXX unimpl.
-static word1  horizontalEdgeFlag;  // XXX unimpl.
 static word1  lightPenHitFlag;
-static word1  pushButtonHitFlag;
-static word1  manualInterruptFlag;  // XXX unimpl.
-
-// Interrupt pending
-static word1  displayInterruptFlag;
-
-// Interrupt enables
-static word1  enableEdgeFlagInterrupt;
-static word1  enableLightPenFlagInterrupt;
-static word1  enablePushButtonHitInterrupt;
-static word1  enableInternalStopInterrupt;
-
-// Non-interrupt causing flags
-static word1  sector0Flag;  // XXX unimpl.
 
 // General registers
-static word1  lightPenEnable;
-static word12 pushDownPtr;
-static word13 xPosition;
-static word13 yPosition;
-static word12 displayAddressCounter; // Plus breakField for 15 bits 
-static word1  controlStateFlag; /* 0: data state, 1: control state */
-static word3  breakField;
-static word1  byteFlipFlop; // XXX unimpl
-static word2  scale; // XXX unimpl
-static word3  mode;
-static word3  intensity; // XXX unimpl
-static word1  blink; // XXX unimpl
-static word12 pushButtons;
-static word12 slaveGroup1; // XXX unimpl
-static word12 slaveGroup2; // XXX unimpl
-
-// Status register 1 bit fields
-#define SR1_LPHF   04000  // Light pen hit
-#define SR1_VEF    02000  // Vertical edge flag
-#define SR1_HEF    01000  // Horizontal edge flag
-#define SR1_ISF    00400  // Internal stop flag
-#define SR1_S0F    00200  // Sector 0 flag
-#define SR1_CSF    00100  // Control state flag
-#define SR1_MIF    00040  // Manual interrupt flag
-#define SR1_PBHF   00020  // Push-button hit flag
-#define SR1_DIF    00010  // Display interrupt flag
-#define SR1_BFR    00007  // Break field register
-
-// Status register 2 bit fields
-#define SR2_BFF    04000  // Byte flip flop
-#define SR2_LPE    02000  // Light pen enable
-#define SR2_HOXP   01000  // High order x position register bit
-#define SR2_HOYP   00400  // High order y position register bit
-#define SR2_SCL    00300  // Scale
-#define SR2_SCL_SHIFT 6
-#define SR2_MODE   00070  // Mode
-#define SR2_MODE_SHIFT 3
-#define SR2_INT    00007  // Intensity
-
-/* Character generator status */
-static word1 cgActive;
-static word1 cgCharacterByte;
-static word1 cgCase;
-static word1 cgCodeSize;
-static word6 cgStartingAddressRegister;
-static word6 cgCharacterSave;
-static word1 cgMode; // 0 increment, 1 short vector
-
-#define CG_ACT  04000
-#define CG_CB   02000
-// spare        01000
-#define CG_CASE 00400
-#define CG_SZ   00200
-// spare        00100
-#define CG_SAR  00077
-
-/* State registers */
-
-static word1  disableLightPenOnResume;
-static word1  lightPenBehavior;
-static word2  xDimension;
-static word2  yDimension;
-static word1  intensifyAllPoints; // XXX unimpl
-static word1  inhibitEdgeFlags;
-static word1  breakRequestFlag; /* This is the run/stop bit */
-
-#define SIC_EFI  04000 /* Enable edge flag interrupt */
-#define SIC_ELPI 02000 /* Enable light pen interrupt */
-#define SIC_DLPR 01000 /* Disable light pen on resume */
-#define SIC_LPB  00400 /* Light pen behavior */
-#define SIC_YDIM 00300 /* Y dimension */
-#define SIC_YDIM_SHIFT 6
-#define SIC_XDIM 00060 /* X dimension */
-#define SIC_XDIM_SHIFT 4
-#define SIC_IAP  00010 /* Intensify all points */
-#define SIC_IEF  00004 /* Inhibit edge flags */
-#define SIC_EPBI 00002 /* Enable interrupt on push button hit */
-#define SIC_EISI 00001 /* Enable interrupt on internal stop */
-
-#define LBF_BFE  04000 /* Break field change enable */
-#define LBF_BF   03400 /* Break field */
-#define LBF_BF_SHIFT 8
-#define LBF_PBE  00200 /* Push button change enable */
-#define LBF_WPB  00100 /* Which push buttons */
-#define LBF_PBS  00077 /* Push buttons */
-
-#define SCG_CASE 00400 /* Case select */
-#define SCG_CHSZ 00200 /* Code size */
-#define SCG_SAR  00077 /* Starting address register */
-
-/* VC8I State engine */
-
-// G Bell: Computer Structures: Readings and Examples, Chap. 25
-
-static word1 signalExternalStop;
-
-enum vc8i_state {
-  // Control state
-  instructionState,
-  midFetch,
-  instructionFetchComplete,
-  midPush,
-  midPop, // This isn't in the documented state diagram, but is
-          // need to account for cycle stealing.
-  internalStop,
-  // externalStopControl, // implemented as breakRequestFlag.
-  // Data state
-  dataState,
-  midDataFetch,
-  dataFetchComplete,
-  dataExecutionWait,
-  //externalStopData // implemented as breakRequestFlag.
-};
-
-static char * states [] = {
-  "instructionState",
-  "midFetch",
-  "instructionFetchComplete",
-  "midPush",
-  "midPop", 
-  "internalStop",
-  "dataState",
-  "midDataFetch",
-  "dataFetchComplete",
-  "dataExecutionWait",
-};
-
-static char * opcodes [8] =
-  {
-    "parameter",
-    "mode",
-    "jump",
-    "pop",
-    "skip",
-    "skip2",
-    "misc",
-    "spare"
-  };
-
-static char * datacodes [8] =
-  {
-    "point",
-    "increment",
-    "vector",
-    "vector continue",
-    "short vector",
-    "character",
-    "graphplot",
-    "unused"
-  };
-
-static enum vc8i_state state;
-/* sub-state flags */
-static word12 instrBuf;
-static word12 instrBuf2;
-static word12 popbuf;
+static word12 xPosition;
+static word12 yPosition;
+static word3  intensity;
 
 int32 vc8i_lpApt = 5;
 
@@ -351,15 +132,6 @@ DIB vc8i_dib = { DEV_VC8I, 010, {
 UNIT vc8i_unit = { UDATA (&vc8i_svc, 0, 0), 0 };
 
 REG vc8i_reg[] = {
-    //{ ORDATA (BUF, vc8i_unit.buf, 8) },
-    //{ FLDATA (ERR, vc8i_err, 0) },
-    //{ FLDATA (DONE, dev_done, INT_V_VC8I) },
-    //{ FLDATA (ENABLE, int_enable, INT_V_VC8I) },
-    //{ FLDATA (INT, int_req, INT_V_VC8I) },
-    //{ DRDATA (POS, vc8i_unit.pos, T_ADDR_W), PV_LEFT },
-    //{ DRDATA (TIME, vc8i_unit.wait, 24), PV_LEFT },
-    //{ FLDATA (STOP_IOE, vc8i_stopioe, 0) },
-    //{ ORDATA (DEVNUM, vc8i_dib.dev, 6), REG_HRO },
     { NULL }
     };
 
@@ -423,27 +195,6 @@ handleInput ();
 return SCPE_OK;
 }
 
-static void updateInterrupt (void)
-  {
-    if ((internalStopFlag   && enableInternalStopInterrupt)  ||
-        externalStopFlag                                     ||
-        (verticalEdgeFlag   && enableEdgeFlagInterrupt)      ||
-        (horizontalEdgeFlag && enableEdgeFlagInterrupt)      ||
-        (lightPenHitFlag    && enableLightPenFlagInterrupt)  ||
-        (pushButtonHitFlag  && enablePushButtonHitInterrupt) ||
-        manualInterruptFlag)
-      {
-        displayInterruptFlag = 1;
-        dev_done = dev_done | INT_LPT;                          /* set done */
-        int_req = INT_UPDATE;                                   /* update interrupts */
-
-      }
-    else
-      {
-        displayInterruptFlag = 0;
-        int_req = int_req & ~INT_LPT;
-      }
-  }
 
 /* IOT routines */
 
@@ -453,7 +204,7 @@ int32 vc8i_05 (int32 IR, int32 AC)
     if (IR & 01)                                        /* DCX */
       {
         // DCX 6051 Clear X Position Register
-        sim_debug (DBG_IOT, & vc8i_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "DCX");
+        sim_debug (DBG_IOT, & vc8i_dev, "DCX\n");
         xPosition = 0;
       }
 
@@ -461,14 +212,14 @@ int32 vc8i_05 (int32 IR, int32 AC)
       {
         // DXL 6052 Load x Position Register
         // A 1s transfer from the x position register to the AC is done.
-        sim_debug (DBG_IOT, & vc8i_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "DXL");
+        sim_debug (DBG_IOT, & vc8i_dev, "DXL\n");
         xPosition = AC;
       }
 
     if (IR & 04)                                        /* DIX */
       {
         // DIX 6054 Intensify Oscilloscope Beam
-        sim_debug (DBG_IOT, & vc8i_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "DIX");
+        sim_debug (DBG_IOT, & vc8i_dev, "DIX\n");
         drawPoint (xPosition, yPosition, 1);
       }
     return AC;
@@ -480,7 +231,7 @@ int32 vc8i_06 (int32 IR, int32 AC)
     if (IR & 01)                                        /* DCY */
       {
         // DCY 6061 Clear Y Position Register
-        sim_debug (DBG_IOT, & vc8i_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "DCY");
+        sim_debug (DBG_IOT, & vc8i_dev, "DCY\n");
         yPosition = 0;
       }
 
@@ -488,14 +239,14 @@ int32 vc8i_06 (int32 IR, int32 AC)
       {
         // DYL 6062 Load x Position Register
         // A 1s transfer from the x position register to the AC is done.
-        sim_debug (DBG_IOT, & vc8i_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "DYL");
+        sim_debug (DBG_IOT, & vc8i_dev, "DYL\n");
         yPosition = AC;
       }
 
     if (IR & 04)                                        /* DIY */
       {
         // DIY 6064 Intensify Oscilloscope Beam
-        sim_debug (DBG_IOT, & vc8i_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "DIY");
+        sim_debug (DBG_IOT, & vc8i_dev, "DIY\n");
         drawPoint (xPosition, yPosition, 1);
       }
     return AC;
@@ -508,21 +259,21 @@ int32 vc8i_07 (int32 IR, int32 AC)
     if ((IR & 07) == 1)                                 /* DSK */
       {
         // DSK 6071 Skip if Light Pen Flag is Set
-        sim_debug (DBG_IOT, & vc8i_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "DSK");
+        sim_debug (DBG_IOT, & vc8i_dev, "DSK\n");
         ret = lightPenHitFlag ? IOT_SKP | AC : AC;
       }
 
     if ((IR & 07) == 2)                                 /* DPC */
       {
         // DPC 6072 Clear Light Pen Flag
-        sim_debug (DBG_IOT, & vc8i_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "DPC");
+        sim_debug (DBG_IOT, & vc8i_dev, "DPC\n");
         lightPenHitFlag = 0;
       }
 
     if (IR & 04)                                        /* DSB */
       {
         // DSB 6074 Set Brightness to n
-        sim_debug (DBG_IOT, & vc8i_dev, "%o %04o %04o i %s\n", (saved_PC >> 12) & 03, saved_PC & 07777, M [saved_PC], "DIY");
+        sim_debug (DBG_IOT, & vc8i_dev, "DSB\n");
         intensity = IR & 03;
       }
     return ret;
@@ -535,32 +286,13 @@ static int graphicsInited = 0;
 
 static t_stat vc8i_reset (DEVICE * dptr)
   {
-    // 2.3.2.8 "The power clear pulse (START key) also clears all display flags.
-    // All display flags cat be cleared by giving three IOTs: CFD-6161 (internal
-    // and external stop, light pen high, and edge); RS1-6062 (push button); 
-    // and SPMI-6172 (manual interrupt).
-    // CFD
-    internalStopFlag = 0;
-    externalStopFlag = 0;
     lightPenHitFlag = 0;
-    verticalEdgeFlag = 0;
-    horizontalEdgeFlag = 0;
-    // RS1-6062 makes no sense
-    pushButtons = 0;
-    // SPMI-6172 makes no sense
-    manualInterruptFlag = 0;
+    xPosition = 0;
+    yPosition = 0;
 
-    state = instructionState;
-    controlStateFlag = 1;
-    signalExternalStop = 0;
-
-    blink = 0;
-    //xPosition = 0;
-    //yPosition = 0;
-
-    dev_done = dev_done & ~INT_VC8I;                     /* clear done, int */
-    int_req = int_req & ~INT_VC8I;
-    int_enable = int_enable | INT_VC8I;                      /* set enable */
+    dev_done = dev_done & ~INT_D8;                     /* clear done, int */
+    int_req = int_req & ~INT_D8;
+    int_enable = int_enable | INT_D8;                      /* set enable */
 
     return SCPE_OK;
   }
@@ -575,7 +307,7 @@ static void setupGraphics (void)
         int usePixmap = 0;
         int lineWidth = 0;
         static char * windowName = "338";
-        initGraphics (x11DisplayName, 0, NULL, windowSize, lineWidth, windowName, lpHit, btnPress);
+        initGraphics (x11DisplayName, 0, NULL, windowSize, lineWidth, windowName, lpHit, NULL);
         drawSegment (0, 0, 0, 0, 0);
         flushDisplay ();
         graphicsInited = 1;
@@ -629,33 +361,8 @@ void sim_instr_vc8i (void)
 static void lpHit (void)
   {
     lightPenHitFlag = 1; // signal the engine
-    updateInterrupt ();
-    breakRequestFlag = 0; // Stop the display
     //sim_printf ("lp hit\r\n");
   }
 
-static void btnPress (int n)
-  {
-    if (n < 0 || n > 11)
-      return;
-    word12 mask = 1u << n;
-    // Pressing a button complements its state.
-    pushButtons ^= mask;
-    // Setting a button on unsets the others 
-    // in its group
-    if (pushButtons & mask)
-      {
-        word12 cmask;
-        if (n < 6)
-          cmask = 07700; // if in the low group, keep the high group
-        else
-          cmask = 00077; // v.v.
-        cmask |= mask; // keep the one just set
-        pushButtons &= cmask; // clear the others in the group
-      }
-    pushButtonHitFlag = 1; // signal the engine
-    updateInterrupt ();
-    //printf ("pb %04o\r\n", pushButtons);
-  }
 
 
