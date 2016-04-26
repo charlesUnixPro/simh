@@ -306,7 +306,7 @@ static void setupGraphics (void)
         int windowSize = 0; // 0 large, 1 small
         int usePixmap = 0;
         int lineWidth = 0;
-        static char * windowName = "338";
+        static char * windowName = "VC8/I";
         initGraphics (x11DisplayName, 0, NULL, windowSize, lineWidth, windowName, lpHit, NULL);
         drawSegment (0, 0, 0, 0, 0);
         flushDisplay ();
