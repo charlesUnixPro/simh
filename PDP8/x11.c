@@ -80,65 +80,66 @@ void handleInput (void)
 //printf ("xev kc %d 0x%x ks %d 0x%x\r\n", event.xkey.keycode, event.xkey.keycode, keysym, keysym);
                 switch (keysym)
                   {
-                    case XK_1:
+                    case XK_grave:
                       if (btnPress)
                         btnPress (0);
                       break;
 
-                    case XK_2:
+                    case XK_1:
                       if (btnPress)
                         btnPress (1);
                       break;
 
-                    case XK_3:
+                    case XK_2:
                       if (btnPress)
                         btnPress (2);
                       break;
 
-                    case XK_4:
+                    case XK_3:
                       if (btnPress)
                         btnPress (3);
                       break;
 
-                    case XK_5:
+                    case XK_4:
                       if (btnPress)
                         btnPress (4);
                       break;
 
-                    case XK_6:
+                    case XK_5:
                       if (btnPress)
                         btnPress (5);
                       break;
 
-                    case XK_7:
+                    case XK_6:
                       if (btnPress)
                         btnPress (6);
+                      break;
+
+                    case XK_7:
+                      if (btnPress)
+                        btnPress (7);
                      break;
 
                     case XK_8:
                       if (btnPress)
-                        btnPress (7);
+                        btnPress (8);
                       break;
 
                     case XK_9:
                       if (btnPress)
-                        btnPress (8);
+                        btnPress (9);
                       break;
 
                     case XK_0:
                       if (btnPress)
-                        btnPress (9);
+                        btnPress (10);
                       break;
 
                     case XK_minus:
                       if (btnPress)
-                        btnPress (10);
-                      break;
-
-                    case XK_equal:
-                      if (btnPress)
                         btnPress (11);
                       break;
+
                   } // switch (keysym)
               } // case keypress
               break;

@@ -71,6 +71,7 @@ void handleInput (void);
 void drawSegment (uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t intensity);
 void flushDisplay (void);
 void refreshDisplay (void);
+static void btnPress (int n);
 
 typedef uint16 word1;
 typedef uint16 word2;
@@ -307,7 +308,7 @@ static void setupGraphics (void)
         int usePixmap = 0;
         int lineWidth = 0;
         static char * windowName = "VC8/I";
-        initGraphics (x11DisplayName, 0, NULL, windowSize, lineWidth, windowName, lpHit, NULL);
+        initGraphics (x11DisplayName, 0, NULL, windowSize, lineWidth, windowName, lpHit, btnPress);
         drawSegment (0, 0, 0, 0, 0);
         flushDisplay ();
         graphicsInited = 1;
@@ -364,5 +365,14 @@ static void lpHit (void)
     //sim_printf ("lp hit\r\n");
   }
 
+
+extern int32 OSR;
+static void btnPress (int n)
+  {
+    if (n < 0 || n > 11)
+      return;
+    OSR ^= 1 << (11 - n);
+    sim_printf ("SR: %04o\n", OSR);
+  }
 
 
