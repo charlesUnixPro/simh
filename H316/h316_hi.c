@@ -527,7 +527,7 @@ int32 hi_io (uint16 host, int32 inst, int32 fnc, int32 dat, int32 dev)
         udp_set_link_loopback (PDEVICE(host), PHIDB(host)->link, FALSE);
         return dat;
       case 005:
-fprintf (stderr, "HnENAB unimp.\r\n");
+//fprintf (stderr, "HnENAB unimp.\r\n");
         // HnENAB - enable ...
         sim_debug(IMP_DBG_IOT, PDEVICE(host), "enable host (PC=%06o)\n", PC-1);
         return dat;
