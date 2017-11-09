@@ -1548,6 +1548,14 @@ PDQ3D = PDQ-3
 PDQ3 = ${PDQ3D}/pdq3_cpu.c ${PDQ3D}/pdq3_sys.c ${PDQ3D}/pdq3_stddev.c \
     ${PDQ3D}/pdq3_mem.c ${PDQ3D}/pdq3_debug.c ${PDQ3D}/pdq3_fdc.c 
 PDQ3_OPT = -I ${PDQ3D} -DUSE_SIM_IMD
+
+ATT3B2D = 3B2
+ATT3B2 = ${ATT3B2D}/3b2_cpu.c ${ATT3B2D}/3b2_mmu.c \
+	${ATT3B2D}/3b2_iu.c ${ATT3B2D}/3b2_if.c \
+	${ATT3B2D}/3b2_id.c ${ATT3B2D}/3b2_dmac.c \
+	${ATT3B2D}/3b2_sys.c ${ATT3B2D}/3b2_io.c \
+	${ATT3B2D}/3b2_sysdev.c
+ATT3B2_OPT = -I ${ATT3B2D} -DUSE_INT64 -DUSE_ADDR64
 #
 # Build everything (not the unsupported/incomplete or experimental simulators)
 #
@@ -1933,6 +1941,12 @@ b5500 : $(BIN)b5500$(EXE)
 ${BIN}b5500${EXE} : ${B5500} ${SIM} 
 	${MKDIRBIN}
 	${CC} ${B5500} ${SIM} ${B5500_OPT} $(CC_OUTSPEC) ${LDFLAGS}
+
+3b2 : $(BIN)3b2$(EXE)
+ 
+${BIN}3b2${EXE} : ${ATT3B2} ${SIM}
+	${MKDIRBIN}
+	${CC} ${ATT3B2} ${SIM} ${ATT3B2_OPT} $(CC_OUTSPEC) ${LDFLAGS}
 
 # Front Panel API Demo/Test program
 
