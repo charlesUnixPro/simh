@@ -828,26 +828,10 @@ SIM_INLINE void write_b(uint32 va, uint8 val)
 
 SIM_INLINE void write_h(uint32 va, uint16 val)
 {
-    /* TODO: Remove after debugging */
-    if (va == 0x020fec08) {
-        sim_debug(EXECUTE_MSG, &mmu_dev,
-                  "[%08x] *** Writing %04x to %04x\n",
-                  R[NUM_PC], val, va);
-        stop_reason = STOP_IBKPT;
-    }
-
     pwrite_h(mmu_xlate_addr(va, ACC_W), val);
 }
 
 SIM_INLINE void write_w(uint32 va, uint32 val)
 {
-    /* TODO: Remove after debugging */
-    if (va == 0x020fec08) {
-        sim_debug(EXECUTE_MSG, &mmu_dev,
-                  "[%08x] *** Writing %08x to %08x\n",
-                  R[NUM_PC], val, va);
-        stop_reason = STOP_IBKPT;
-    }
-
     pwrite_w(mmu_xlate_addr(va, ACC_W), val);
 }
