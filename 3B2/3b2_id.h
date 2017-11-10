@@ -96,16 +96,10 @@
 
 /* Geometry */
 
-/* #define ID_CYL          925 */
-/* #define ID_SEC_SIZE     512 */
-/* #define ID_SEC_CNT      18  */
-/* #define ID_HEADS        9 */
-/* #define ID_CYL_SIZE     512 * 18 */
-
-#define ID_CYL          1024
+#define ID_CYL          925
 #define ID_SEC_SIZE     512    /* Bytes per sector */
 #define ID_SEC_CNT      18     /* Sectors per track */
-#define ID_HEADS        8
+#define ID_HEADS        9
 #define ID_CYL_SIZE     512 * 18
 
 /* Unit, Register, Device descriptions */
@@ -131,7 +125,6 @@ extern t_bool id_irq;
 
 #define CMD_NUM      ((id_cmd >> 4) & 0xf)
 #define UNIT_NUM     (id_cmd & 1)  /* We intentionally ignore the top unit address bit  */
-#define SEL_UNIT     (id_cmd & 2)  /* We intentionally look at the top unit address bit */
 
 /* Function prototypes */
 

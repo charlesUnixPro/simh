@@ -362,7 +362,8 @@ static SIM_INLINE uint32 dma_address(uint8 channel, uint32 offset, t_bool r) {
             dma_state.channels[channel].addr +
             offset);
 
-    addr |= (dma_state.channels[channel].page & 0xff) << 16;
+    /* The top bit of the page address is a R/W bit, so we mask it here */
+    addr |= (dma_state.channels[channel].page & 0x7f) << 16;
 
     return addr;
 }

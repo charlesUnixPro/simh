@@ -41,7 +41,7 @@ extern uint16 csr_data;
 
 UNIT iu_unit[] = {
     { UDATA(&iu_svc_tti, UNIT_IDLE, 0), TMLN_SPD_9600_BPS },
-    { UDATA(&iu_svc_tto, TT_MODE_7P, 0), SERIAL_OUT_WAIT },
+    { UDATA(&iu_svc_tto, TT_MODE_8B, 0), SERIAL_OUT_WAIT },
     { UDATA(&iu_svc_timer, 0, 0) },
     { NULL }
 };

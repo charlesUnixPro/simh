@@ -628,7 +628,7 @@ void id_handle_command(uint8 val)
     case ID_CMD_SPEC:
         sim_debug(WRITE_MSG, &id_dev,
                   "[%08x]\tCOMMAND\t%02x\tSpecify - %d - ETN=%02x ESN=%02x\n",
-                  R[NUM_PC], val, SEL_UNIT, id_data[3], id_data[4]);
+                  R[NUM_PC], val, UNIT_NUM, id_data[3], id_data[4]);
         id_dtlh[UNIT_NUM] = id_data[1];
         id_etn = id_data[3];
         id_esn = id_data[4];
@@ -748,7 +748,7 @@ void id_handle_command(uint8 val)
     case ID_CMD_RDATA:
         sim_debug(WRITE_MSG, &id_dev,
                   "[%08x]\tCOMMAND\t%02x\tRead Data - %d\n",
-                  R[NUM_PC], val, SEL_UNIT);
+                  R[NUM_PC], val, UNIT_NUM);
         if (id_sel_unit->flags & UNIT_ATT) {
             id_drq = TRUE;
             id_buf_ptr = 0;
@@ -794,7 +794,7 @@ void id_handle_command(uint8 val)
     case ID_CMD_WDATA:
         sim_debug(WRITE_MSG, &id_dev,
                   "[%08x]\tCOMMAND\t%02x\tWrite Data - %d\n",
-                  R[NUM_PC], val, SEL_UNIT);
+                  R[NUM_PC], val, UNIT_NUM);
         if (id_sel_unit->flags & UNIT_ATT) {
             id_drq = TRUE;
             id_buf_ptr = 0;
