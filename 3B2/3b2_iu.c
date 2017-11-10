@@ -432,7 +432,8 @@ static SIM_INLINE void iu_tx(uint8 portno, uint8 val)
 
     if (p->conf & TX_EN) {
         sim_debug(EXECUTE_MSG, &iu_dev,
-                  "TRANSMIT: %02x (%c)\n", val, val);
+                  "[%08x] TRANSMIT: %02x (%c)\n",
+                  R[NUM_PC], val, val);
         p->stat &= ~(STS_TXR|STS_TXE);
         iu_state.istat &= ~(1 << (portno*4));
 

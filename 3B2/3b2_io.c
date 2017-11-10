@@ -103,6 +103,9 @@ uint32 io_read(uint32 pa, size_t size)
     }
 
     /* Not found. */
+    sim_debug(IO_D_MSG, &cpu_dev,
+              "[%08x] [io_read] ADDR=%08x: No device found.\n",
+              R[NUM_PC], pa);
     csr_data |= CSRTIMO;
     cpu_defer(2000, &reset_timeout);
     cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
@@ -132,6 +135,9 @@ void io_write(uint32 pa, uint32 val, size_t size)
     }
 
     /* Not found. */
+    sim_debug(IO_D_MSG, &cpu_dev,
+              "[%08x] [io_write] ADDR=%08x: No device found.\n",
+              R[NUM_PC], pa);
     csr_data |= CSRTIMO;
     cpu_defer(250, &reset_timeout);
     cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);

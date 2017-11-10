@@ -688,6 +688,9 @@ t_stat mmu_decode_va(uint32 va, uint8 r_acc, t_bool fc, uint32 *pa)
 
     /* Load the Segment Descriptor */
     if (mmu_get_sd(va, r_acc, fc, &sd0, &sd1, &sd_cached) != SCPE_OK) {
+        sim_debug(EXECUTE_MSG, &mmu_dev,
+                  "[%08x] Could not get segment descriptor. r_acc=%d, fc=%08x, va=%08x\n",
+                  R[NUM_PC], r_acc, fc, va);
         return SCPE_NXM;
     }
 

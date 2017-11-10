@@ -695,8 +695,8 @@ uint32 tod_read(uint32 pa, size_t size)
     }
 
     sim_debug(READ_MSG, &tod_dev,
-              ">>> READ TOD: reg=%d\n",
-              reg);
+              "[%08x] READ TOD: reg=%02x\n",
+              R[NUM_PC], reg);
 
     return 0;
 }
@@ -708,6 +708,6 @@ void tod_write(uint32 pa, uint32 val, size_t size)
     reg = pa - TODBASE;
 
     sim_debug(WRITE_MSG, &tod_dev,
-              ">>> WRITE TOD: reg=%d val=%d\n",
-              reg, val);
+              "[%08x] WRITE TOD: reg=%02x val=%d\n",
+              R[NUM_PC], reg, val);
 }

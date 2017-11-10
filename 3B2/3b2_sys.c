@@ -51,6 +51,7 @@ DEVICE *sim_devices[] = {
     &cpu_dev,
     &mmu_dev,
     &timer_dev,
+    &tod_dev,
     &nvram_dev,
     &csr_dev,
     &iu_dev,

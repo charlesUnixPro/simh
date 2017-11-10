@@ -244,7 +244,7 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define PSW_CUR_IPL  (((R[NUM_PSW] & PSW_IPL_MASK) >> PSW_IPL) & 0xf)
 
 #define TODBASE   0x41000
-#define TODSIZE   0x10
+#define TODSIZE   0x40
 #define TIMERBASE 0x42000
 #define TIMERSIZE 0x20
 #define NVRAMBASE 0x43000

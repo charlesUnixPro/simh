@@ -1392,10 +1392,6 @@ t_bool cpu_on_interrupt(uint8 ipl)
     uint32 new_pcbp;
     uint16 id = ipl; /* TODO: Does this need to be uint16? */
 
-    sim_debug(IRQ_MSG, &cpu_dev,
-              "[cpu_on_interrupt] [%08x] psw=%08x ipl=%d csr=%04x\n",
-              R[NUM_PC], R[NUM_PSW], ipl, csr_data);
-
     /*
      * "If a nonmaskable interrupt request is received, an auto-vector
      * interrupt acknowledge cycle is performed (as if an autovector
@@ -1529,18 +1525,6 @@ t_stat sim_instr(void)
     }
 
     while (stop_reason == 0) {
-
-        /* TODO: Remove after debugging */
-        if (R[NUM_PC] == 0x40024760) {
-            sim_debug(TRACE_MSG, &cpu_dev,
-                      ">> idscan()\n");
-        }
-
-        if (R[NUM_PC] == 0x400256e8) {
-            sim_debug(TRACE_MSG, &cpu_dev,
-                      ">> idrecal()\n");
-        }
-
         abort_context = C_NONE;
 
         if (sim_brk_summ && sim_brk_test(R[NUM_PC], SWMASK ('E'))) {
