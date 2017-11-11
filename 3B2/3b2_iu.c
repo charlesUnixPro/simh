@@ -207,6 +207,9 @@ t_stat iu_svc_tti(UNIT *uptr)
 
 t_stat iu_svc_tto(UNIT *uptr)
 {
+    sim_debug(EXECUTE_MSG, &iu_dev,
+              "Calling iu_txrdy_irq on iu_svc_tto\n");
+
     iu_txrdy_irq(PORT_A);
 
     return SCPE_OK;
@@ -361,6 +364,8 @@ void iu_write(uint32 pa, uint32 val, size_t size)
         iu_state.imr = val;
         csr_data &= ~CSRUART;
         /* Possibly cause an interrupt */
+        sim_debug(EXECUTE_MSG, &iu_dev,
+                  ">>> calling iu_txrdy_irq() on IMR write.\n");
         iu_txrdy_irq(PORT_A);
         iu_txrdy_irq(PORT_B);
         break;
@@ -459,6 +464,8 @@ static SIM_INLINE void iu_w_cmd(uint8 portno, uint8 cmd)
         iu_state.port[portno].stat &= ~STS_TXR;
         iu_state.port[portno].stat &= ~STS_TXE;
         iu_state.drqa = FALSE;
+        sim_debug(EXECUTE_MSG, &iu_dev,
+                  ">>> Disabling transmitter.\n");
     } else if (cmd & CMD_ETX) {
         iu_state.port[portno].conf |= TX_EN;
         /* TXE and TXR are always set by an ENABLE */
@@ -466,6 +473,8 @@ static SIM_INLINE void iu_w_cmd(uint8 portno, uint8 cmd)
         iu_state.port[portno].stat |= STS_TXE;
         iu_state.istat |= 1 << (portno*4);
         iu_state.drqa = TRUE;
+        sim_debug(EXECUTE_MSG, &iu_dev,
+                  ">>> Calling iu_txrdy_irq() on TX Enable\n");
         iu_txrdy_irq(portno);
     }
 

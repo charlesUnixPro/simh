@@ -301,12 +301,7 @@ noret __libc_longjmp (jmp_buf buf, int val);
 /* Calculate delays (in simulator steps) for times */
 /* System clock runs at 10MHz; 100ns period.       */
 
-/* 1.0 = 10000 */
-/* 2.0 = 5000  */
-/* 3.0 = 3000  (should be 3333) */
-/* 4.0 = 2000  (should be 2500) */
-
-#define US_PER_INST         4.3
+#define US_PER_INST         0.9
 
 #define INST_PER_MS         (1000.0 / US_PER_INST)
 
