@@ -424,6 +424,7 @@ static SIM_INLINE void clear_exceptions();
 static SIM_INLINE void set_psw_tm(t_bool val);
 static SIM_INLINE void clear_instruction(instr *inst);
 static SIM_INLINE int8 op_type(operand *op);
+static SIM_INLINE t_bool op_signed(operand *op);
 static SIM_INLINE t_bool is_byte_immediate(operand * oper);
 static SIM_INLINE t_bool is_halfword_immediate(operand * oper);
 static SIM_INLINE t_bool is_word_immediate(operand * oper);
@@ -458,5 +459,31 @@ static SIM_INLINE t_bool op_is_sp(operand *op);
 static SIM_INLINE uint32 cpu_next_pc();
 static SIM_INLINE void add(t_uint64 a, t_uint64 b, operand *dst);
 static SIM_INLINE void sub(t_uint64 a, t_uint64 b, operand *dst);
+
+/* Helper macros */
+
+#define MOD(A,B,OP1,OP2,SZ) {                                      \
+        if (op_signed(OP1) && !op_signed(OP2)) {                   \
+            result = (SZ)(B) % (A);                                \
+        } else if (!op_signed(OP1) && op_signed(OP2)) {            \
+            result = (B) % (SZ)(A);                                \
+        } else if (op_signed(OP1)  && op_signed(OP2)) {            \
+            result = (SZ)(B) % (SZ)(A);                            \
+        } else {                                                   \
+            result = (B) % (A);                                    \
+        }                                                          \
+    }
+
+#define DIV(A,B,OP1,OP2,SZ) {                                      \
+        if (op_signed(OP1) && !op_signed(OP2)) {                   \
+            result = (SZ)(B) / (A);                                \
+        } else if (!op_signed(OP1) && op_signed(OP2)) {            \
+            result = (B) / (SZ)(A);                                \
+        } else if (op_signed(OP1)  && op_signed(OP2)) {            \
+            result = (SZ)(B) / (SZ)(A);                            \
+        } else {                                                   \
+            result = (B) / (A);                                    \
+        }                                                          \
+    }
 
 #endif

@@ -1913,7 +1913,7 @@ t_stat sim_instr(void)
                 cpu_set_v_flag(1);
             }
 
-            result = (int32)b / (int32)a;
+            DIV(a, b, src1, dst, int32);
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -1932,7 +1932,7 @@ t_stat sim_instr(void)
                 cpu_set_v_flag(1);
             }
 
-            result = (int16)b / (int16)a;
+            DIV(a, b, src1, dst, int16);
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -1970,7 +1970,7 @@ t_stat sim_instr(void)
                 cpu_set_v_flag(1);
             }
 
-            result = (int32)b / (int32)a;
+            DIV(a, b, src1, src2, int32);
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -1989,7 +1989,7 @@ t_stat sim_instr(void)
                 cpu_set_v_flag(1);
             }
 
-            result = (int16)b / (int16)a;
+            DIV(a, b, src1, src2, int16);
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -2265,32 +2265,35 @@ t_stat sim_instr(void)
             }
             break;
         case MODW2:
+            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODW2\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(dst);
             if (a == 0) {
                 cpu_abort(NORMAL_EXCEPTION, INTEGER_ZERO_DIVIDE);
                 break;
             }
-            result = (uint32)b % (uint32)a;
+            MOD(a, b, src1, dst, int32);
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
             cpu_set_v_flag_op(result, dst);
             break;
         case MODH2:
+            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODH2\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(dst);
             if (a == 0) {
                 cpu_abort(NORMAL_EXCEPTION, INTEGER_ZERO_DIVIDE);
                 break;
             }
-            result = (uint16)b % (uint16)a;
+            MOD(a, b, src1, dst, int16);
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
             cpu_set_v_flag_op(result, dst);
             break;
         case MODB2:
+            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODB2\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(dst);
             if (a == 0) {
@@ -2305,32 +2308,35 @@ t_stat sim_instr(void)
             break;
             break;
         case MODW3:
+            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODW3\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(src2);
             if (a == 0) {
                 cpu_abort(NORMAL_EXCEPTION, INTEGER_ZERO_DIVIDE);
                 break;
             }
-            result = (int32)b % (int32)a;
+            MOD(a, b, src1, src2, int32);
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
             cpu_set_v_flag_op(result, dst);
             break;
         case MODH3:
+            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODH3\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(src2);
             if (a == 0) {
                 cpu_abort(NORMAL_EXCEPTION, INTEGER_ZERO_DIVIDE);
                 break;
             }
-            result = (int16)b % (int16)a;
+            MOD(a, b, src1, src2, int16);
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
             cpu_set_v_flag_op(result, dst);
             break;
         case MODB3:
+            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODB3\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(src2);
             if (a == 0) {
@@ -3198,6 +3204,10 @@ static SIM_INLINE int8 op_type(operand *op) {
     } else {
         return op->dtype;
     }
+}
+
+static SIM_INLINE t_bool op_signed(operand *op) {
+    return (op_type(op) == WD || op_type(op) == HW || op_type(op) == BT);
 }
 
 static SIM_INLINE t_bool is_byte_immediate(operand * oper)
