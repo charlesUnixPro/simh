@@ -214,21 +214,21 @@
 #define SRAMB_LEN(va)     (mmu_state.sec[SID(va)].len + 1)
 
 /* Pluck out Segment Descriptor fields */
-#define SD_PRESENT(sd0)   (sd0 & 1)
-#define SD_MODIFIED(sd0)  ((sd0 >> 1) & 1)
-#define SD_CONTIG(sd0)    ((sd0 >> 2) & 1)
-#define SD_CACHE(sd0)     ((sd0 >> 3) & 1)
-#define SD_TRAP(sd0)      ((sd0 >> 4) & 1)
-#define SD_REF(sd0)       ((sd0 >> 5) & 1)
-#define SD_VALID(sd0)     ((sd0 >> 6) & 1)
-#define SD_INDIRECT(sd0)  ((sd0 >> 7) & 1)
-#define SD_SEG_ADDR(sd1)  (sd1 & 0xffffffe0)
-#define SD_MAX_OFF(sd0)   ((sd0 >> 10) & 0x3fff)
-#define SD_ACC(sd0)       ((sd0 >> 24) & 0xff)
+#define SD_PRESENT(sd0)   ((sd0) & 1)
+#define SD_MODIFIED(sd0)  (((sd0) >> 1) & 1)
+#define SD_CONTIG(sd0)    (((sd0) >> 2) & 1)
+#define SD_CACHE(sd0)     (((sd0) >> 3) & 1)
+#define SD_TRAP(sd0)      (((sd0) >> 4) & 1)
+#define SD_REF(sd0)       (((sd0) >> 5) & 1)
+#define SD_VALID(sd0)     (((sd0) >> 6) & 1)
+#define SD_INDIRECT(sd0)  (((sd0) >> 7) & 1)
+#define SD_SEG_ADDR(sd1)  ((sd1) & 0xffffffe0)
+#define SD_MAX_OFF(sd0)   (((sd0) >> 10) & 0x3fff)
+#define SD_ACC(sd0)       (((sd0) >> 24) & 0xff)
 #define SD_R_MASK         0x20
 #define SD_M_MASK         0x2
 #define SD_GOOD_MASK      0x1
-#define SDCE_TAG(sdcl)    (sdcl & 0x3ff)
+#define SDCE_TAG(sdcl)    ((sdcl) & 0x3ff)
 
 #define SD_ADDR(va)  (mmu_state.sec[SID(va)].addr + (SSL(va) * 8))
 
@@ -252,12 +252,14 @@
 #define PD_LAST(pd)       ((pd >> 2) & 1)
 #define PD_WFAULT(pd)     ((pd >> 4) & 1)
 #define PD_REF(pd)        ((pd >> 5) & 1)
-#define PD_ADDR(pd)       (pd & 0xfffff800)
+#define PD_ADDR(pd)       (pd & 0xfffff800)   /* Address portion of PD */
 #define PD_USED_MASK      0x40
 #define PD_R_MASK         0x20
 #define PD_M_MASK         0x2
 #define PD_GOOD_MASK      0x1
 #define PDCXL_TAG(pdcxl)  (pdcxl & 0xffff)
+
+#define PD_LOC(sd1,va)    SD_SEG_ADDR(sd1) + (PSL(va) * 4)
 
 /* Page Descriptor Cache Entry
  *
@@ -334,27 +336,23 @@ uint32 mmu_xlate_addr(uint32 va, uint8 r_acc);
 t_stat mmu_decode_vaddr(uint32 vaddr, uint8 r_acc,
                         t_bool fc, uint32 *pa);
 
-#define SHOULD_CACHE_SD(sd) (fc && !SD_PRESENT(sd) && !SD_CACHE(sd))
+#define SHOULD_CACHE_PD(pd) \
+    (fc && PD_PRESENT(pd))
+
+#define SHOULD_CACHE_SD(sd)                                 \
+    (fc && SD_VALID(sd) && SD_PRESENT(sd))
 
 #define SHOULD_UPDATE_SD_R_BIT(sd)              \
-    (fc && MMU_CONF_R && !(sd & SD_R_MASK))
+    (MMU_CONF_R && !((sd) & SD_R_MASK))
 
 #define SHOULD_UPDATE_SD_M_BIT(sd)                              \
-    (fc && MMU_CONF_M && r_acc == ACC_W && !(sd & SD_M_MASK))
-
-/*
-#define SHOULD_UPDATE_PD_R_BIT(pd)              \
-    (fc && MMU_CONF_R && !((pd) & PD_R_MASK))
-
-#define SHOULD_UPDATE_PD_M_BIT(pd)                              \
-    (fc && MMU_CONF_M && r_acc == ACC_W && !((pd) & PD_M_MASK))
-*/
+    (MMU_CONF_M && r_acc == ACC_W && !((sd) & SD_M_MASK))
 
 #define SHOULD_UPDATE_PD_R_BIT(pd)              \
-    (fc && !((pd) & PD_R_MASK))
+    (!((pd) & PD_R_MASK))
 
 #define SHOULD_UPDATE_PD_M_BIT(pd)                              \
-    (fc && r_acc == ACC_W && !((pd) & PD_M_MASK))
+    (r_acc == ACC_W && !((pd) & PD_M_MASK))
 
 /*
  * Find an SD in the cache.
@@ -543,10 +541,6 @@ static SIM_INLINE void mmu_update_sd(uint32 va, uint32 mask)
     uint32 sd0, tag;
     uint8  ci;
 
-    sim_debug(EXECUTE_MSG, &mmu_dev,
-              ">>> Updating bit 0x%x in SD at address %08x.\n",
-              mask, SD_ADDR(va));
-
     tag = SD_TAG(va);
     ci  = (SID(va) * NUM_SDCE) + SD_IDX(va);
 
@@ -568,10 +562,6 @@ static SIM_INLINE void mmu_update_pd(uint32 va, uint32 pd_addr, uint32 mask)
 {
     uint32 pd, tag, pdcll, pdclh, pdcrl, pdcrh;
     uint8  ci;
-
-    sim_debug(EXECUTE_MSG, &mmu_dev,
-              ">>> Updating bit 0x%x in PD at address %08x.\n",
-              mask, pd_addr);
 
     tag = PD_TAG(va);
     ci  = (SID(va) * NUM_PDCE) + PD_IDX(va);

@@ -2271,7 +2271,7 @@ t_stat sim_instr(void)
                 cpu_abort(NORMAL_EXCEPTION, INTEGER_ZERO_DIVIDE);
                 break;
             }
-            result = (int32)b % (int32)a;
+            result = (uint32)b % (uint32)a;
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
@@ -2284,7 +2284,7 @@ t_stat sim_instr(void)
                 cpu_abort(NORMAL_EXCEPTION, INTEGER_ZERO_DIVIDE);
                 break;
             }
-            result = (int16)b % (int16)a;
+            result = (uint16)b % (uint16)a;
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);

@@ -121,15 +121,9 @@ uint32 mmu_read(uint32 pa, size_t size)
         break;
     case MMU_FC:
         data = mmu_state.fcode;
-        sim_debug(READ_MSG, &mmu_dev,
-                  "[%08x] MMU_FAULT_CODE = %08x\n",
-                  R[NUM_PC], data);
         break;
     case MMU_FA:
         data = mmu_state.faddr;
-        sim_debug(READ_MSG, &mmu_dev,
-                  "[%08x] MMU_FAULT_ADDR = %08x\n",
-                  R[NUM_PC], data);
         break;
     case MMU_CONF:
         data = mmu_state.conf & 0x7;
@@ -195,6 +189,7 @@ void mmu_write(uint32 pa, uint32 val, size_t size)
         offset = offset & 3;
         mmu_state.sra[offset] = val;
         mmu_state.sec[offset].addr = val & 0xffffffe0;
+        /* We flush the entire section on writing SRAMA */
         flush_cache_sec(offset);
         sim_debug(WRITE_MSG, &mmu_dev,
                   "[%08x] MMU_SRAMA[%d] = %08x (addr=%08x)\n",
@@ -204,18 +199,13 @@ void mmu_write(uint32 pa, uint32 val, size_t size)
         offset = offset & 3;
         mmu_state.srb[offset] = val;
         mmu_state.sec[offset].len = (val >> 10) & 0x1fff;
-        /* TODO: Figure out if we need this or not. DGMON tests pass
-           either way. */
-        /* flush_cache_sec(offset); */
+        /* We do not flush the cache on writing SRAMB */
         sim_debug(WRITE_MSG, &mmu_dev,
                   "[%08x] MMU_SRAMB[%d] = %08x (len=%06x)\n",
                   R[NUM_PC], offset, val, mmu_state.sec[offset].len);
         break;
     case MMU_FC:
         mmu_state.fcode = val;
-        sim_debug(WRITE_MSG, &mmu_dev,
-                  "[%08x] MMU_FAULT_CODE = %08x\n",
-                  R[NUM_PC], val);
         break;
     case MMU_FA:
         mmu_state.faddr = val;
@@ -444,73 +434,105 @@ void pwrite_b(uint32 pa, uint8 val)
 /* Helper functions for MMU decode. */
 
 /*
- * Get the Segment Descriptor for a virtual address.
+ * Get the Segment Descriptor for a virtual address on a cache miss.
  *
  * Returns SCPE_OK on success, SCPE_NXM on failure.
  *
  * If SCPE_NXM is returned, a failure code and fault address will be
  * set in the appropriate registers.
  *
+ * As always, the flag 'fc' may be set to FALSE to avoid certain
+ * typses of fault checking.
+ *
  */
 t_stat mmu_get_sd(uint32 va, uint8 r_acc, t_bool fc,
-                  uint32 *sd0, uint32 *sd1,
-                  t_bool *sd_cached)
+                  uint32 *sd0, uint32 *sd1)
 {
-    *sd_cached = TRUE;
+    /* We immediately do some bounds checking (fc flag is not checked
+     * because this is a fatal error) */
+    if (SSL(va) > SRAMB_LEN(va)) {
+        MMU_FAULT(MMU_F_SDTLEN);
+        sim_debug(EXECUTE_MSG, &mmu_dev,
+                  "[%08x] SDT Length Fault. sramb_len=%x ssl=%x va=%08x\n",
+                  R[NUM_PC], SRAMB_LEN(va), SSL(va), va);
+        return SCPE_NXM;
+    }
 
-    if (get_sdce(va, sd0, sd1) != SCPE_OK) {
-        /* The SD wasn't found in the cache, so we need to find it */
-        *sd_cached = FALSE;
+    /* sd0 contains the segment descriptor, sd1 contains a pointer to
+       the PDT or Segment */
+    *sd0 = pread_w(SD_ADDR(va));
+    *sd1 = pread_w(SD_ADDR(va) + 4);
 
-        /* sd0 contains the segment descriptor, sd1 contains a pointer
-           to the PDT or Segment */
+    if (!SD_VALID(*sd0)) {
+        sim_debug(EXECUTE_MSG, &mmu_dev,
+                  "[%08x] Invalid Segment Descriptor. va=%08x sd0=%08x\n",
+                  R[NUM_PC], va, *sd0);
+        MMU_FAULT(MMU_F_INV_SD);
+        return SCPE_NXM;
+    }
 
-        *sd0 = pread_w(SD_ADDR(va));
-        *sd1 = pread_w(SD_ADDR(va) + 4);
+    /* TODO: Handle indirect lookups. */
+    if (SD_INDIRECT(*sd0)) {
+        stop_reason = STOP_MMU;
+        return SCPE_NXM;
+    }
 
-        if (!SD_VALID(*sd0)) {
+    /* If the segment descriptor isn't present, we need to
+     * fail out */
+    if (!SD_PRESENT(*sd0)) {
+        if (SD_CONTIG(*sd0)) {
             sim_debug(EXECUTE_MSG, &mmu_dev,
-                      "[%08x] Invalid Segment Descriptor. va=%08x sd0=%08x\n",
-                      R[NUM_PC], va, *sd0);
-            MMU_FAULT(MMU_F_INV_SD);
+                      "[%08x] Segment Not Present. va=%08x",
+                      R[NUM_PC], va);
+            MMU_FAULT(MMU_F_SEG_NOT_PRES);
             return SCPE_NXM;
-        }
-
-        /* TODO: Handle indirect lookups. */
-        if (SD_INDIRECT(*sd0)) {
-            stop_reason = STOP_MMU;
+        } else {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] PDT Not Present. va=%08x",
+                      R[NUM_PC], va);
+            MMU_FAULT(MMU_F_PDT_NOT_PRES);
             return SCPE_NXM;
-        }
-
-        /* If the segment descriptor isn't present, we need to
-         * fail out */
-        if (!SD_PRESENT(*sd0)) {
-            if (SD_CONTIG(*sd0)) {
-                sim_debug(EXECUTE_MSG, &mmu_dev,
-                          "[%08x] Segment Not Present. va=%08x",
-                          R[NUM_PC], va);
-                MMU_FAULT(MMU_F_SEG_NOT_PRES);
-                return SCPE_NXM;
-            } else {
-                sim_debug(EXECUTE_MSG, &mmu_dev,
-                          "[%08x] PDT Not Present. va=%08x",
-                          R[NUM_PC], va);
-                MMU_FAULT(MMU_F_PDT_NOT_PRES);
-                return SCPE_NXM;
-            }
-        }
-
-        if (SHOULD_CACHE_SD(*sd0)) {
-            put_sdce(va, *sd0, *sd1);
-        }
-
-        if (SHOULD_UPDATE_SD_R_BIT(*sd0)) {
-            mmu_update_sd(va, SD_R_MASK);
         }
     }
 
-    if (SHOULD_UPDATE_SD_M_BIT(*sd0)) {
-        mmu_update_sd(va, SD_M_MASK);
+    if (SHOULD_CACHE_SD(*sd0)) {
+        put_sdce(va, *sd0, *sd1);
+    }
+
+    return SCPE_OK;
+}
+
+/*
+ * Load a page descriptor from memory
+ */
+t_stat mmu_get_pd(uint32 va, uint8 r_acc, t_bool fc,
+                  uint32 sd0, uint32 sd1,
+                  uint32 *pd, uint8 *pd_acc)
+{
+    uint32 pd_addr;
+
+    /* Where do we find the page descriptor? */
+    pd_addr = SD_SEG_ADDR(sd1) + (PSL(va) * 4);
+
+    /* Bounds checking on length */
+    if ((PSL(va) * 4) > MAX_OFFSET(sd0)) {
+        sim_debug(EXECUTE_MSG, &mmu_dev,
+                  "[%08x] PDT Length Fault. "
+                  "PDT Offset=%08x Max Offset=%08x va=%08x\n",
+                  R[NUM_PC], (PSL(va) * 4),
+                  MAX_OFFSET(sd0), va);
+        MMU_FAULT(MMU_F_PDTLEN);
+        return SCPE_NXM;
+    }
+
+    *pd = pread_w(pd_addr);
+
+    /* Copy the access flags from the SD */
+    *pd_acc = SD_ACC(sd0);
+
+    /* Cache it */
+    if (SHOULD_CACHE_PD(*pd)) {
+        put_pdce(va, sd0, *pd);
     }
 
     return SCPE_OK;
@@ -548,88 +570,62 @@ t_stat mmu_decode_contig(uint32 va, uint8 r_acc,
         return SCPE_NXM;
     }
 
+
     /* TODO: It's possible to have BOTH a segment offset violation AND
        an access violation. We need to cover that instance. */
+
+
+    if (fc) {
+        /* Update R and M bits if configured */
+        if (SHOULD_UPDATE_SD_R_BIT(sd0)) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] Updating R bit in SD\n",
+                      R[NUM_PC]);
+            mmu_update_sd(va, SD_R_MASK);
+        }
+
+        if (SHOULD_UPDATE_SD_M_BIT(sd0)) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] Updating M bit in SD\n",
+                      R[NUM_PC]);
+            mmu_update_sd(va, SD_M_MASK);
+        }
+
+        /* Generate object trap if needed */
+        if (SD_TRAP(sd0)) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] Object Trap. va=%08x",
+                      R[NUM_PC], va);
+            MMU_FAULT(MMU_F_OTRAP);
+            return SCPE_NXM;
+        }
+    }
 
     *pa = SD_SEG_ADDR(sd1) + SOT(va);
     return SCPE_OK;
 }
 
-t_stat mmu_decode_paged(uint32 va, uint8 r_acc,
-                        uint32 sd0, uint32 sd1,
-                        t_bool sd_cached, t_bool fc,
-                        uint32 *pa)
+t_stat mmu_decode_paged(uint32 va, uint8 r_acc, t_bool fc,
+                        uint32 sd1, uint32 pd,
+                        uint8 pd_acc, uint32 *pa)
 {
-    uint32 pd, pd_addr;
-    uint8 pd_acc;
-    t_bool pd_cached = TRUE;
-
-    /* Where do we find the page descriptor? */
-    pd_addr = SD_SEG_ADDR(sd1) + (PSL(va) * 4);
-
-    if (get_pdce(va, &pd, &pd_acc) != SCPE_OK) {
-        pd_cached = FALSE;
-
-        /*
-         * The PD wasn't found in the cache, we need to go to main
-         * memory to find it
-         */
-
-        /* Bounds checking on length */
-        if ((PSL(va) * 4) > MAX_OFFSET(sd0)) {
-            sim_debug(EXECUTE_MSG, &mmu_dev,
-                      "[%08x] PDT Length Fault. "
-                      "PDT Offset=%08x Max Offset=%08x va=%08x\n",
-                      R[NUM_PC], (PSL(va) * 4),
-                      MAX_OFFSET(sd0), va);
-            MMU_FAULT(MMU_F_PDTLEN);
-            return SCPE_NXM;
-        }
-
-        pd = pread_w(pd_addr);
-
-        /* Copy the access flags from the SD */
-        pd_acc = SD_ACC(sd0);
-
-        /* Cache it */
-        if (PD_PRESENT(pd) && fc) {
-            put_pdce(va, sd0, pd);
-        }
-
-        /* Modify the R bit and write it back */
-        if (SHOULD_UPDATE_PD_R_BIT(pd)) {
-            mmu_update_pd(va, pd_addr, PD_R_MASK);
-        }
-    }
-
     if (fc && mmu_check_perm(pd_acc, r_acc) != SCPE_OK) {
         sim_debug(EXECUTE_MSG, &mmu_dev,
                   "[%08x] PAGE: NO ACCESS TO MEMORY AT %08x.\n"
                   "\t\tcpu_cm=%d r_acc=%x pd_acc=%02x\n"
-                  "\t\tsd0=%08x pd=%08x psw=%08x pd_cached=%d\n",
+                  "\t\tpd=%08x psw=%08x\n",
                   R[NUM_PC], va, CPU_CM, r_acc, pd_acc,
-                  sd0, pd, R[NUM_PSW], pd_cached);
+                  pd, R[NUM_PSW]);
         MMU_FAULT(MMU_F_ACC);
-        return SCPE_NXM;
-    }
-
-    /* If there is a PD cache hit, L = 1, and the address requested
-     * is beyond the segment boundary, fail. */
-    if (pd_cached && PD_LAST(pd) &&
-        ((PD_ADDR(pd) + POT(va)) > (SD_SEG_ADDR(sd1) + MAX_OFFSET(sd0)))) {
-        sim_debug(EXECUTE_MSG, &mmu_dev,
-                  "[%08x] PAGED: Segment Offset Fault.\n",
-                  R[NUM_PC]);
-        MMU_FAULT(MMU_F_SEG_OFFSET);
         return SCPE_NXM;
     }
 
     /* If the PD is not marked present, fail */
     if (!PD_PRESENT(pd)) {
         sim_debug(EXECUTE_MSG, &mmu_dev,
-                  "[%08x] Page Not Present. sd0=%08x "
+                  "[%08x] Page Not Present. "
                   "pd=%08x r_acc=%x va=%08x\n",
-                  R[NUM_PC], sd0, pd, r_acc, va);
+                  R[NUM_PC], pd, r_acc, va);
         MMU_FAULT(MMU_F_PAGE_NOT_PRES);
         return SCPE_NXM;
     }
@@ -647,7 +643,18 @@ t_stat mmu_decode_paged(uint32 va, uint8 r_acc,
 
         /* If this is a write, modify the M bit */
         if (SHOULD_UPDATE_PD_M_BIT(pd)) {
-            mmu_update_pd(va, pd_addr, PD_M_MASK);
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] Updating M bit in PD\n",
+                      R[NUM_PC]);
+            mmu_update_pd(va, PD_LOC(sd1, va), PD_M_MASK);
+        }
+
+        /* Modify the R bit and write it back */
+        if (SHOULD_UPDATE_PD_R_BIT(pd)) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] Updating R bit in PD\n",
+                      R[NUM_PC]);
+            mmu_update_pd(va, PD_LOC(sd1, va), PD_R_MASK);
         }
     }
 
@@ -669,46 +676,79 @@ t_stat mmu_decode_paged(uint32 va, uint8 r_acc,
 t_stat mmu_decode_va(uint32 va, uint8 r_acc, t_bool fc, uint32 *pa)
 {
     uint32 sd0, sd1, pd;
-    t_bool sd_cached;
+    uint8 pd_acc;
+    t_stat sd_cached, pd_cached, succ;
 
     if (!mmu_enabled()) {
         *pa = va;
         return SCPE_OK;
     }
 
-    /* We immediately do some bounds checking (fc flag is not
-     * checked because this is a fatal error) */
-    if (SSL(va) > SRAMB_LEN(va)) {
-        MMU_FAULT(MMU_F_SDTLEN);
-        sim_debug(EXECUTE_MSG, &mmu_dev,
-                  "[%08x] SDT Length Fault. sramb_len=%x ssl=%x va=%08x\n",
-                  R[NUM_PC], SRAMB_LEN(va), SSL(va), va);
-        return SCPE_NXM;
-    }
+    /* We must check both caches first to determine what kind of miss
+       processing to do. */
 
-    /* Load the Segment Descriptor */
-    if (mmu_get_sd(va, r_acc, fc, &sd0, &sd1, &sd_cached) != SCPE_OK) {
-        sim_debug(EXECUTE_MSG, &mmu_dev,
-                  "[%08x] Could not get segment descriptor. r_acc=%d, fc=%08x, va=%08x\n",
-                  R[NUM_PC], r_acc, fc, va);
-        return SCPE_NXM;
-    }
+    sd_cached = get_sdce(va, &sd0, &sd1);
+    pd_cached = get_pdce(va, &pd, &pd_acc);
 
-    /* Generate object trap if needed */
-    if (fc && SD_TRAP(sd0)) {
-        sim_debug(EXECUTE_MSG, &mmu_dev,
-                  "[%08x] Object Trap. va=%08x",
-                  R[NUM_PC], va);
-        MMU_FAULT(MMU_F_OTRAP);
-        return SCPE_NXM;
-    }
+    /* Now, potentially, do miss processing */
 
+    if (sd_cached != SCPE_OK && pd_cached != SCPE_OK) {
+        /* Full miss processing. We have to load both the SD and PD
+         * from main memory, and potentially cache them.  */
+        if (mmu_get_sd(va, r_acc, fc, &sd0, &sd1) != SCPE_OK) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] Could not get SD (full miss). r_acc=%d, fc=%d, va=%08x\n",
+                      R[NUM_PC], r_acc, fc, va);
+            return SCPE_NXM;
+        }
+
+        if (!SD_CONTIG(sd0)) {
+            if (mmu_get_pd(va, r_acc, fc, sd0, sd1, &pd, &pd_acc) != SCPE_OK) {
+                sim_debug(EXECUTE_MSG, &mmu_dev,
+                          "[%08x] Could not get PD (full miss). r_acc=%d, fc=%d, va=%08x\n",
+                          R[NUM_PC], r_acc, fc, va);
+                return SCPE_NXM;
+            }
+        }
+    } else if (sd_cached == SCPE_OK && pd_cached != SCPE_OK && !SD_CONTIG(sd0)) {
+        /* Partial miss processing - SDC hit and PDC miss - but only
+         * if segment is paged. */
+        if (mmu_get_pd(va, r_acc, fc, sd0, sd1, &pd, &pd_acc) != SCPE_OK) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] Could not get PD (partial miss). r_acc=%d, fc=%d, va=%08x\n",
+                      R[NUM_PC], r_acc, fc, va);
+            return SCPE_NXM;
+        }
+    } else if (sd_cached != SCPE_OK && pd_cached == SCPE_OK) {
+        /* Partial miss processing - SDC miss and PDC hit. This is
+         * always paged translation */
+
+        /* If the 'L' bit is set in the page descriptor, we need to
+         * bring in the SD and do some bounds checking */
+        if (PD_LAST(pd)) {
+            if (mmu_get_sd(va, r_acc, fc, &sd0, &sd1) != SCPE_OK) {
+                sim_debug(EXECUTE_MSG, &mmu_dev,
+                          "[%08x] Could not get SD (partial miss). r_acc=%d, fc=%d, va=%08x\n",
+                          R[NUM_PC], r_acc, fc, va);
+                return SCPE_NXM;
+            }
+
+            if ((PD_ADDR(pd) + POT(va)) > (SD_SEG_ADDR(sd1) + MAX_OFFSET(sd0))) {
+                sim_debug(EXECUTE_MSG, &mmu_dev,
+                          "[%08x] PAGED: Segment Offset Fault.\n",
+                          R[NUM_PC]);
+                MMU_FAULT(MMU_F_SEG_OFFSET);
+                return SCPE_NXM;
+            }
+        }
+
+        return mmu_decode_paged(va, r_acc, fc, sd1, pd, pd_acc, pa);
+    }
 
     if (SD_CONTIG(sd0)) {
         return mmu_decode_contig(va, r_acc, sd0, sd1, fc, pa);
     } else {
-        return mmu_decode_paged(va, r_acc, sd0, sd1,
-                                sd_cached, fc, pa);
+        return mmu_decode_paged(va, r_acc, fc, sd1, pd, pd_acc, pa);
     }
 }
 
