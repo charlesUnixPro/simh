@@ -2265,7 +2265,6 @@ t_stat sim_instr(void)
             }
             break;
         case MODW2:
-            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODW2\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(dst);
             if (a == 0) {
@@ -2279,7 +2278,6 @@ t_stat sim_instr(void)
             cpu_set_v_flag_op(result, dst);
             break;
         case MODH2:
-            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODH2\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(dst);
             if (a == 0) {
@@ -2293,7 +2291,6 @@ t_stat sim_instr(void)
             cpu_set_v_flag_op(result, dst);
             break;
         case MODB2:
-            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODB2\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(dst);
             if (a == 0) {
@@ -2308,7 +2305,6 @@ t_stat sim_instr(void)
             break;
             break;
         case MODW3:
-            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODW3\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(src2);
             if (a == 0) {
@@ -2322,7 +2318,6 @@ t_stat sim_instr(void)
             cpu_set_v_flag_op(result, dst);
             break;
         case MODH3:
-            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODH3\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(src2);
             if (a == 0) {
@@ -2336,7 +2331,6 @@ t_stat sim_instr(void)
             cpu_set_v_flag_op(result, dst);
             break;
         case MODB3:
-            sim_debug(EXECUTE_MSG, &cpu_dev, "[%08x] MODB3\n", R[NUM_PC]);
             a = cpu_read_op(src1);
             b = cpu_read_op(src2);
             if (a == 0) {
