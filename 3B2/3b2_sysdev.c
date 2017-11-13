@@ -377,9 +377,9 @@ struct timer_ctr TIMERS[3];
  */
 
 UNIT timer_unit[] = {
-    { UDATA(&timer_svc, 0, 0) },
-    { UDATA(&timer_svc, 0, 0) },
-    { UDATA(&timer_svc, 0, 0) },
+    { UDATA(&timer0_svc, 0, 0), TMR_WAIT },
+    { UDATA(&timer1_svc, 0, 0), TMR_WAIT },
+    { UDATA(&timer2_svc, 0, 0), TMR_WAIT },
     { NULL }
 };
 
@@ -422,7 +422,7 @@ int32 timer_decr(struct timer_ctr *ctr)
 }
 
 t_stat timer_reset(DEVICE *dptr) {
-    int i;
+    int32 i, t;
 
     memset(&TIMERS, 0, sizeof(struct timer_ctr) * 3);
 
@@ -434,34 +434,68 @@ t_stat timer_reset(DEVICE *dptr) {
     /* Timer 1 gate is always active */
     TIMERS[1].gate = 1;
 
+    t = sim_rtcn_init_unit(&timer_unit[1], timer_unit[1].wait, CLK_TMR);
+
+    /* We do not activate the timer yet. Wait for software to do
+       that. */
+
     return SCPE_OK;
 }
 
-t_stat timer_svc(UNIT *uptr)
+t_stat timer0_svc(UNIT *uptr)
 {
     struct timer_ctr *ctr;
     int32 time;
 
     ctr = (struct timer_ctr *)uptr->tmr;
 
+    time = ctr->divider * TIMER_STP_US;
+
+    if (time == 0) {
+        time = TIMER_STP_US;
+    }
+
+    sim_activate_abs(uptr, DELAY_US(time));
+    ctr->stime = TIMER_START_TIME;
+}
+
+t_stat timer1_svc(UNIT *uptr)
+{
+    struct timer_ctr *ctr;
+    int32 t;
+    int32 ticks;
+
+    ctr = (struct timer_ctr *)uptr->tmr;
+
     if (ctr->enabled && ctr->gate) {
-        /* Only timer 1 is tied to an interrupt */
-        /* Don't fire if "Inhibit Timers" is set */
-        if (uptr->tmrnum == 1 && !(csr_data & CSRITIM)) {
-            csr_data |= CSRCLK;
-        }
 
-        time = ctr->divider * TIMER_STP_US;
+        /* Fire the IPL 15 clock interrupt */
+        csr_data |= CSRCLK;
 
-        if (time == 0) {
-            time = TIMER_STP_US;
-        }
-
-        sim_activate_abs(uptr, DELAY_US(time));
+        ticks = ctr->divider / TIMER_STP_US;
+        t = sim_rtcn_calb(ticks, CLK_TMR);
+        sim_activate_after(uptr, 1000000 / ticks);
         ctr->stime = TIMER_START_TIME;
     }
 
     return SCPE_OK;
+}
+
+t_stat timer2_svc(UNIT *uptr)
+{
+    struct timer_ctr *ctr;
+    int32 time;
+
+    ctr = (struct timer_ctr *)uptr->tmr;
+
+    time = ctr->divider * TIMER_STP_US;
+
+    if (time == 0) {
+        time = TIMER_STP_US;
+    }
+
+    sim_activate_abs(uptr, DELAY_US(time));
+    ctr->stime = TIMER_START_TIME;
 }
 
 uint32 timer_read(uint32 pa, size_t size)
@@ -654,12 +688,13 @@ DEVICE tod_dev = {
 
 t_stat tod_reset(DEVICE *dptr)
 {
+    int32 t;
+
     /* December 1, 1988 (testing) */
     tod_reg = 596966400;
 
-    int32 t;
     if (!sim_is_running) {
-        t = sim_rtcn_init_unit(&tod_unit, tod_unit.wait, TMR_CLK);
+        t = sim_rtcn_init_unit(&tod_unit, tod_unit.wait, CLK_TOD);
         sim_activate_after(&tod_unit, 1000000 / CLK_TICKS);
     }
 
@@ -670,7 +705,7 @@ t_stat tod_svc(UNIT *uptr)
 {
     int32 t;
 
-    t = sim_rtcn_calb(CLK_TICKS, TMR_CLK);
+    t = sim_rtcn_calb(CLK_TICKS, CLK_TOD);
     sim_activate_after(&tod_unit, 1000000 / CLK_TICKS);
 
     tod_reg++;

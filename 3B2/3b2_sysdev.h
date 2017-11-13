@@ -41,7 +41,10 @@ extern DEVICE csr_dev;
 extern DEVICE tod_dev;
 extern DEBTAB sys_deb_tab[];
 
-#define TMR_CLK 0
+#define CLK_TMR 0   /* The clock responsible for IPL 15 interrupts */
+#define CLK_TOD 1   /* The Time-of-Day clock */
+
+#define TMR_WAIT  25000
 
 struct timer_ctr {
     uint16 divider;
@@ -69,7 +72,9 @@ void nvram_write(uint32 pa, uint32 val, size_t size);
 t_stat timer_reset(DEVICE *dptr);
 uint32 timer_read(uint32 pa, size_t size);
 void timer_write(uint32 pa, uint32 val, size_t size);
-t_stat timer_svc(UNIT *uptr);
+t_stat timer0_svc(UNIT *uptr);
+t_stat timer1_svc(UNIT *uptr);
+t_stat timer2_svc(UNIT *uptr);
 
 /* CSR */
 t_stat csr_svc(UNIT *uptr);
