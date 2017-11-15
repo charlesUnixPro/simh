@@ -457,6 +457,8 @@ t_stat timer0_svc(UNIT *uptr)
 
     sim_activate_abs(uptr, DELAY_US(time));
     ctr->stime = TIMER_START_TIME;
+
+    return SCPE_OK;
 }
 
 t_stat timer1_svc(UNIT *uptr)
@@ -496,6 +498,8 @@ t_stat timer2_svc(UNIT *uptr)
 
     sim_activate_abs(uptr, DELAY_US(time));
     ctr->stime = TIMER_START_TIME;
+
+    return SCPE_OK;
 }
 
 uint32 timer_read(uint32 pa, size_t size)
