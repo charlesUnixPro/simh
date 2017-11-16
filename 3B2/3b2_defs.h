@@ -328,6 +328,12 @@ extern DEVICE dmac_dev;
 /* global symbols from the CSR */
 extern uint16 csr_data;
 
+/* global symbols from the IU */
+extern t_bool iu_increment_a;
+extern t_bool iu_increment_b;
+extern void increment_modep_a();
+extern void increment_modep_b();
+
 /* global symbols from the MMU */
 extern t_bool mmu_enabled();
 extern void mmu_enable();
@@ -341,7 +347,6 @@ extern void write_w(uint32 va, uint32 val);
 
 /* Globally scoped CPU functions */
 void cpu_abort(uint8 et, uint8 isc);
-void cpu_defer(int32 count, callback cb);
 void cpu_set_irq(uint8 ipl, uint8 id, uint16 csr_flags);
 void cpu_clear_irq(uint8 ipl, uint16 csr_flags);
 

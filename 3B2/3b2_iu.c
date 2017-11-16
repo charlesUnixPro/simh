@@ -37,6 +37,9 @@
 /* The IU state */
 IU_STATE iu_state;
 
+t_bool iu_increment_a = FALSE;
+t_bool iu_increment_b = FALSE;
+
 extern uint16 csr_data;
 
 UNIT iu_unit[] = {
@@ -109,13 +112,9 @@ DEVICE iu_dev = {
     DEV_DEBUG, 0, sys_deb_tab
 };
 
-/*
- * This is essentially a colossal hack. We never want to increment the
- * pointer during an interlocked Read/Write operation, so we only
- * increment after a CPU step has occured.
- */
 void increment_modep_a()
 {
+    iu_increment_a = FALSE;
     iu_state.port[PORT_A].modep++;
 
     if (iu_state.port[PORT_A].modep > 1) {
@@ -125,13 +124,13 @@ void increment_modep_a()
 
 void increment_modep_b()
 {
+    iu_increment_b = FALSE;
     iu_state.port[PORT_B].modep++;
 
     if (iu_state.port[PORT_B].modep > 1) {
         iu_state.port[PORT_B].modep = 0;
     }
 }
-
 
 void iu_txrdy_irq(uint8 portno) {
     uint8 irq_mask = 1 << (portno * 4);
@@ -260,7 +259,7 @@ uint32 iu_read(uint32 pa, size_t size)
     case MR12A:
         modep = iu_state.port[PORT_A].modep;
         data = iu_state.port[PORT_A].mode[modep];
-        cpu_defer(0, &increment_modep_a);
+        iu_increment_a = TRUE;
         break;
     case SRA:
         data = iu_state.port[PORT_A].stat;
@@ -289,7 +288,7 @@ uint32 iu_read(uint32 pa, size_t size)
     case MR12B:
         modep = iu_state.port[PORT_B].modep;
         data = iu_state.port[PORT_B].mode[modep];
-        cpu_defer(0, &increment_modep_b);
+        iu_increment_b = TRUE;
         break;
     case SRB:
         data = iu_state.port[PORT_B].stat;
@@ -338,7 +337,7 @@ void iu_write(uint32 pa, uint32 val, size_t size)
     case MR12A:
         modep = iu_state.port[PORT_A].modep;
         iu_state.port[PORT_A].mode[modep] = val & 0xff;
-        cpu_defer(0, &increment_modep_a);
+        iu_increment_a = TRUE;
         break;
     case CSRA:
         /* Set baud rate - not implemented */
@@ -384,7 +383,7 @@ void iu_write(uint32 pa, uint32 val, size_t size)
     case MR12B:
         modep = iu_state.port[PORT_B].modep;
         iu_state.port[PORT_B].mode[modep] = val & 0xff;
-        cpu_defer(0, &increment_modep_b);
+        iu_increment_b = TRUE;
         break;
     case CRB:  /* Command B */
         iu_w_cmd(PORT_B, val);

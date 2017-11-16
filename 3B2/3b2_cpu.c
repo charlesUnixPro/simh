@@ -55,8 +55,6 @@ uint32 cpu_hist_p;
 
 t_bool cpu_in_wait = FALSE;
 
-callback cpu_defer_callback = NULL;
-
 volatile size_t cpu_exception_stack_depth = 0;
 volatile int32 stop_reason;
 volatile uint32 abort_reason;
@@ -135,7 +133,7 @@ static DEBTAB cpu_deb_tab[] = {
     { NULL,         0                                       }
 };
 
-UNIT cpu_unit = { UDATA (&cpu_svc, UNIT_FIX|UNIT_BINK, MAXMEMSIZE) };
+UNIT cpu_unit = { UDATA (NULL, UNIT_FIX|UNIT_BINK, MAXMEMSIZE) };
 
 #define UNIT_V_EXHALT   (UNIT_V_UF + 0)                 /* halt to console */
 #define UNIT_EXHALT     (1u << UNIT_V_EXHALT)
@@ -511,17 +509,6 @@ void cpu_load_rom()
     }
 }
 
-t_stat cpu_svc(UNIT *uptr)
-{
-    /* Run any pending callback */
-    if (cpu_defer_callback != NULL) {
-        (*cpu_defer_callback)();
-        cpu_defer_callback = NULL;
-    }
-
-    return SCPE_OK;
-}
-
 t_stat cpu_boot(int32 unit_num, DEVICE *dptr)
 {
     /*
@@ -754,22 +741,6 @@ void fprint_sym_m(FILE *st, instr *ip)
         }
     }
 }
-
-/*
- * Defer an action by a number of steps
- */
-void cpu_defer(int32 delay, callback cb)
-{
-    sim_activate(&cpu_unit, delay);
-    cpu_defer_callback = cb;
-}
-
-void cpu_cancel_deferred()
-{
-    sim_cancel(&cpu_unit);
-    cpu_defer_callback = NULL;
-}
-
 
 t_stat cpu_show_hist(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
@@ -1481,6 +1452,22 @@ t_stat sim_instr(void)
 
         /* Process DMA requests */
         dmac_service_drqs();
+
+
+        /*
+         * Post-increment IU mode pointers (if needed).
+         *
+         * This is essentially a colossal hack. We never want to
+         * increment these pointers during an interlocked Read/Write
+         * operation, so we only increment after a CPU step has
+         * occured.
+         */
+        if (iu_increment_a) {
+            increment_modep_a();
+        }
+        if (iu_increment_b) {
+            increment_modep_b();
+        }
 
         /* Process pending IRQ, if applicable */
         if (PSW_CUR_IPL < cpu_ipl()) {
