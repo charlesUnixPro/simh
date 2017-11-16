@@ -45,12 +45,13 @@ uint32 *RAM = NULL;
 jmp_buf save_env;
 volatile uint32 abort_context;
 
+/* The last decoded instruction */
+instr cpu_instr;
+
 /* Circular buffer of instructions */
 instr *INST;
-uint32 cpu_history_size;
-uint32 cpu_hist_t;
-uint32 cpu_hist_h;
-instr *last_instruction = NULL;
+uint32 cpu_hist_size;
+uint32 cpu_hist_p;
 
 t_bool cpu_in_wait = FALSE;
 
@@ -632,11 +633,7 @@ t_stat cpu_reset(DEVICE *dptr)
             sim_vm_is_subroutine_call = cpu_is_pc_a_subroutine_call;
         }
 
-        if (INST == NULL) {
-            cpu_history_size = DEF_HIST_SIZE;
-            INST = (instr *) calloc(cpu_history_size, sizeof(instr));
-            memset(INST, 0, sizeof(instr) * cpu_history_size);
-        }
+        cpu_hist_size = 0;
 
         cpu_load_rom();
     }
@@ -644,8 +641,7 @@ t_stat cpu_reset(DEVICE *dptr)
     abort_context = C_NONE;
     cpu_nmi = FALSE;
 
-    cpu_hist_t = 0;
-    cpu_hist_h = 0;
+    cpu_hist_p = 0;
     cpu_in_wait = 0;
 
     sim_brk_types = SWMASK('E');
@@ -704,36 +700,33 @@ t_bool cpu_is_pc_a_subroutine_call (t_addr **ret_addrs)
 
 t_stat cpu_set_hist(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
-    uint32 size;
+    uint32 i, size;
     t_stat result;
     instr *nINST = NULL;
 
-    if (cptr) {
-        size = (uint32) get_uint(cptr, 10, MAX_HIST_SIZE, &result);
-        if ((result != SCPE_OK) || (size == 0)) {
-            return SCPE_ARG;
+    if (cptr == NULL) {
+        /* Disable the feature */
+        for (i = 0; i < cpu_hist_size; i++) {
+            INST[i].valid = FALSE;
         }
-    } else {
-        size = DEF_HIST_SIZE;
+        cpu_hist_size = 0;
+        cpu_hist_p = 0;
+        return SCPE_OK;
     }
-
-    /* Allocate a new ring buffer */
-    nINST = (instr *) calloc(size, sizeof(instr));
-    memset(nINST, 0, sizeof(instr) * size);
-
-    if (nINST == NULL) {
-        return SCPE_MEM;
+    size = (uint32) get_uint(cptr, 10, MAX_HIST_SIZE, &result);
+    if ((result != SCPE_OK) || (size < MIN_HIST_SIZE)) {
+        return SCPE_ARG;
     }
-
-    /* Move the pointers */
-    cpu_hist_h = 0;
-    cpu_hist_t = 0;
-
-    /* Free the old ring buffer */
-    free(INST);
-
-    INST = nINST;
-    cpu_history_size = size;
+    cpu_hist_p = 0;
+    if (size > 0) {
+        free(INST);
+        INST = (instr *)calloc(size, sizeof(instr));
+        if (INST == NULL) {
+            return SCPE_MEM;
+        }
+        memset(INST, 0, sizeof(instr) * size);
+        cpu_hist_size = size;
+    }
 
     return SCPE_OK;
 }
@@ -786,59 +779,53 @@ t_stat cpu_show_hist(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
     t_stat result;
     instr *ip;
 
+    int32 di;
+
+    if (cpu_hist_size == 0) {
+        return SCPE_NOFNC;
+    }
+
     /* 'count' is the number of history entries the user wants */
 
     if (cptr) {
-        count = (size_t) get_uint(cptr, 10, cpu_history_size, &result);
+        count = (size_t) get_uint(cptr, 10, cpu_hist_size, &result);
         if ((result != SCPE_OK) || (count == 0)) {
             return SCPE_ARG;
         }
     } else {
-        count = cpu_history_size;
+        count = cpu_hist_size;
     }
 
     /* Position for reading from ring buffer */
-    i = cpu_hist_h;
+    di = cpu_hist_p - count;
 
-    for (j = 0; j < count; j++) {
-        if (i == cpu_hist_t) {
-            break;
-        }
-        if (--i < 0) {
-            i = cpu_history_size - 1;
-        }
+    if (di < 0) {
+        di = di + cpu_hist_size;
     }
 
-    while (TRUE) {
-        if (i == cpu_hist_h) {
-            break;
-        }
+    fprintf(st, "PSW      SP       PC        IR\n");
 
-        ip = &INST[i];
-
-        /* Show the opcode mnemonic */
-        fprintf(st, "%08x %08x %08x  ", ip->psw, ip->sp, ip->pc);
-
-        /* Show the operand data */
-        if (ip->mn == NULL || ip->mn->op_count < 0) {
-            fprintf(st, "???");
-        } else {
-            fprint_sym_m(st, ip);
-            if (ip->mn->op_count > 0 && ip->mn->mode == OP_DESC) {
-                fprintf(st, "\n                            ");
-                for (j = 0; j < (uint32) ip->mn->op_count; j++) {
-                    fprintf(st, "%08x", ip->operands[j].data);
-                    if (j < (uint32) ip->mn->op_count - 1) {
-                        fputc(' ', st);
+    for (i = 0; i < count; i++) {
+        ip = &INST[(di++) % cpu_hist_size];
+        if (ip->valid) {
+            /* Show the opcode mnemonic */
+            fprintf(st, "%08x %08x %08x  ", ip->psw, ip->sp, ip->pc);
+            /* Show the operand data */
+            if (ip->mn == NULL || ip->mn->op_count < 0) {
+                fprintf(st, "???");
+            } else {
+                fprint_sym_m(st, ip);
+                if (ip->mn->op_count > 0 && ip->mn->mode == OP_DESC) {
+                    fprintf(st, "\n                            ");
+                    for (j = 0; j < (uint32) ip->mn->op_count; j++) {
+                        fprintf(st, "%08x", ip->operands[j].data);
+                        if (j < (uint32) ip->mn->op_count - 1) {
+                            fputc(' ', st);
+                        }
                     }
                 }
             }
-        }
-
-        fputc('\n', st);
-
-        if (++i == cpu_history_size) {
-            i = 0;
+            fputc('\n', st);
         }
     }
 
@@ -999,54 +986,6 @@ t_stat cpu_set_size(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
     memset(RAM, 0, MEM_SIZE >> 2);
 
     return SCPE_OK;
-}
-
-/* We may need to unwind the ring buffer if there was an error on
-   instruction fetch. */
-void unwind_instruction()
-{
-    if (cpu_hist_h <= 0) {
-        cpu_hist_h = cpu_history_size - 1;
-    } else {
-        cpu_hist_h--;
-    }
-
-    if (cpu_hist_t <= 0) {
-        cpu_hist_t = cpu_history_size - 1;
-    } else {
-        cpu_hist_t--;
-    }
-
-    clear_instruction(&INST[cpu_hist_h]);
-    last_instruction = &INST[cpu_hist_h];
-}
-
-/*
- * Returns a pointer to the next instruction struct in the instruction
- * ring buffer.
- */
-instr *cpu_next_instruction()
-{
-    instr *ip;
-
-    ip = &INST[cpu_hist_h];
-
-    if (++cpu_hist_h >= cpu_history_size) {
-        cpu_hist_h = 0;
-    }
-
-    /* The head always "pushes" the tail along the array */
-    if (cpu_hist_h == cpu_hist_t) {
-        if (++cpu_hist_t == cpu_history_size) {
-            cpu_hist_t = 0;
-        }
-    }
-
-    clear_instruction(ip);
-
-    last_instruction = ip;
-
-    return ip;
 }
 
 static SIM_INLINE void clear_instruction(instr *inst)
@@ -1233,7 +1172,6 @@ uint8 decode_instruction(instr *instr)
     if (read_operand(pa + offset++, &b1) != SCPE_OK) {
         /* We tried to read out of a page that doesn't exist. We
            need to let the operating system handle it.*/
-        unwind_instruction();
         cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
         return offset;
     }
@@ -1255,7 +1193,6 @@ uint8 decode_instruction(instr *instr)
     }
 
     if (mn == NULL) {
-        unwind_instruction();
         cpu_abort(NORMAL_EXCEPTION, ILLEGAL_OPCODE);
         return offset;
     }
@@ -1263,7 +1200,6 @@ uint8 decode_instruction(instr *instr)
     instr->mn = mn;
 
     if (mn->op_count < 0) {
-        unwind_instruction();
         cpu_abort(NORMAL_EXCEPTION, ILLEGAL_OPCODE);
         return offset;
     }
@@ -1437,7 +1373,8 @@ t_bool cpu_on_interrupt(uint8 ipl)
 
 t_stat sim_instr(void)
 {
-    instr* i;
+    instr i;
+
     uint8 et, isc;
     t_bool handled;
 
@@ -1561,36 +1498,39 @@ t_stat sim_instr(void)
         R[NUM_PSW] &= ~PSW_TM;
         R[NUM_PSW] |= PSW_TM_MASK;
 
-        /* Get the instruction */
-        i = cpu_next_instruction();
-
         /* Decode the instruction */
-        cpu_ilen = decode_instruction(i);
+        cpu_ilen = decode_instruction(&cpu_instr);
 
         /*
          * Operate on the decoded instruction.
          */
 
-        /* Handle the instruction */
-
         /* Get the operands */
-        if (i->mn->src_op1 >= 0) {
-            src1 = &i->operands[i->mn->src_op1];
+        if (cpu_instr.mn->src_op1 >= 0) {
+            src1 = &cpu_instr.operands[cpu_instr.mn->src_op1];
         }
 
-        if (i->mn->src_op2 >= 0) {
-            src2 = &i->operands[i->mn->src_op2];
+        if (cpu_instr.mn->src_op2 >= 0) {
+            src2 = &cpu_instr.operands[cpu_instr.mn->src_op2];
         }
 
-        if (i->mn->src_op3 >= 0) {
-            src3 = &i->operands[i->mn->src_op3];
+        if (cpu_instr.mn->src_op3 >= 0) {
+            src3 = &cpu_instr.operands[cpu_instr.mn->src_op3];
         }
 
-        if (i->mn->dst_op >= 0) {
-            dst = &i->operands[i->mn->dst_op];
+        if (cpu_instr.mn->dst_op >= 0) {
+            dst = &cpu_instr.operands[cpu_instr.mn->dst_op];
         }
 
-        switch (i->mn->opcode) {
+        /* Record the instruction for history */
+        if (cpu_hist_size > 0) {
+            /* Shallow copy */
+            INST[cpu_hist_p] = cpu_instr;
+            INST[cpu_hist_p].valid = TRUE;
+            cpu_hist_p = (cpu_hist_p + 1) % cpu_hist_size;
+        }
+
+        switch (cpu_instr.mn->opcode) {
         case ADDW2:
         case ADDH2:
         case ADDB2:
@@ -2983,7 +2923,7 @@ static uint32 cpu_effective_address(operand *op)
  *  bits in length. If the result is to be stored in a register, the
  *  processor writes all 32 bits to that register. The processor
  *  automatically strips any surplus high-order bits from a result
- *  when writing bytes or halfwords to memory." -- "WE 3200
+ *  when writing bytes or halfwords to memory." -- "WE 32100
  *  Microprocessor Information Manual", Section 3.1.1
  *
  */

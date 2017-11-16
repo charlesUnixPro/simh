@@ -374,13 +374,14 @@ typedef struct _operand {
 
 /*
  * An inst is a combination of a decoded instruction and
- * 0 to 4 operands
+ * 0 to 4 operands. Also used for history record keeping.
  */
 typedef struct _instr {
     mnemonic *mn;
     uint32 psw;
     uint32 sp;
     uint32 pc;
+    t_bool valid;
     operand operands[4];
 } instr;
 
