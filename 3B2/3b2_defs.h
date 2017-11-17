@@ -187,7 +187,7 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define PRIVILEGED_REGISTER  15
 
 #define PSW_ET                0
-#define PSW_TM                2
+#define PSW_TM                2u
 #define PSW_ISC               3
 #define PSW_I                 7
 #define PSW_R                 8

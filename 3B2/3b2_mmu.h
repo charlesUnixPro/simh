@@ -168,7 +168,7 @@
 #define MMU_CONF_R  (mmu_state.conf & 0x2)
 
 /* Caching */
-#define NUM_SEC    4     /* Number of memory sections */
+#define NUM_SEC    4u    /* Number of memory sections */
 #define NUM_SDCE   8     /* SD cache entries per section */
 #define NUM_PDCE   8     /* PD cache entries per section per side (l/r) */
 #define SET_SIZE   2     /* PDs are held in a 2-way associative set */
@@ -227,7 +227,7 @@
 #define SD_ACC(sd0)       (((sd0) >> 24) & 0xff)
 #define SD_R_MASK         0x20
 #define SD_M_MASK         0x2
-#define SD_GOOD_MASK      0x1
+#define SD_GOOD_MASK      0x1u
 #define SDCE_TAG(sdcl)    ((sdcl) & 0x3ff)
 
 #define SD_ADDR(va)  (mmu_state.sec[SID(va)].addr + (SSL(va) * 8))
@@ -256,7 +256,7 @@
 #define PD_USED_MASK      0x40
 #define PD_R_MASK         0x20
 #define PD_M_MASK         0x2
-#define PD_GOOD_MASK      0x1
+#define PD_GOOD_MASK      0x1u
 #define PDCXL_TAG(pdcxl)  (pdcxl & 0xffff)
 
 #define PD_LOC(sd1,va)    SD_SEG_ADDR(sd1) + (PSL(va) * 4)
@@ -273,7 +273,7 @@
 #define PDCXH_TO_PD(pdch)     ((pdch & 0xfffff836)|1)
 #define PDCXL_TO_ACC(pdcl)    (((pdcl & 0xff000000) >> 24) & 0xff)
 
-#define PDCLH_USED_MASK       0x40
+#define PDCLH_USED_MASK       0x40u
 
 /* Fault codes */
 #define MMU_FAULT(f) {                                      \
@@ -504,7 +504,7 @@ static SIM_INLINE void flush_cache_sec(uint8 sec)
 
 static SIM_INLINE void flush_caches()
 {
-    int i;
+    uint8 i;
 
     for (i = 0; i < NUM_SEC; i++) {
         flush_cache_sec(i);

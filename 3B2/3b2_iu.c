@@ -304,16 +304,19 @@ uint32 iu_read(uint32 pa, size_t size)
         data = 0x8e;
         break;
     case START_CTR:
+        data = 0;
         iu_state.istat &= ~ISTS_CRI;
         delay = IU_TIMER_STP * iu_state.c_set;
         sim_activate_abs(&iu_unit[UNIT_IU_TIMER], DELAY_US(delay));
         break;
     case STOP_CTR:
+        data = 0;
         iu_state.istat &= ~ISTS_CRI;
         csr_data &= ~CSRUART;
         sim_cancel(&iu_unit[UNIT_IU_TIMER]);
         break;
     case 17: /* Clear DMAC interrupt */
+        data = 0;
         iu_state.drqa = FALSE;
         iu_state.drqb = FALSE;
         csr_data &= ~CSRDMA;

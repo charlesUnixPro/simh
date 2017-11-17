@@ -652,7 +652,7 @@ void id_handle_command(uint8 val)
                   "[%08x]\tCOMMAND\t%02x\tRecalibrate - %d\n",
                   R[NUM_PC], val, UNIT_NUM);
         id_cyl[UNIT_NUM] = 0;
-        time = abs(id_cyl[UNIT_NUM] - data);
+        time = id_cyl[UNIT_NUM];
         id_activate(DELAY_US(ID_RECAL_WAIT + (time * ID_SEEK_WAIT)));
         id_seek_sis = TRUE;
         break;
