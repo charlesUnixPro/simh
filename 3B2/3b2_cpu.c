@@ -1372,6 +1372,7 @@ t_stat sim_instr(void)
      * normal-exception, it needs to be treated as a stack-exception.
      */
     if (abort_reason != 0) {
+//sim_printf ("[%d] exception %d\n", (int) sim_gtime (), abort_reason);
         if (cpu_exception_stack_depth++ >= 10) {
             return STOP_ESTK;
         }
@@ -1517,6 +1518,7 @@ t_stat sim_instr(void)
             cpu_hist_p = (cpu_hist_p + 1) % cpu_hist_size;
         }
 
+//sim_printf ("[%d] ic %08x opcode %02x\n", (int) sim_gtime (), R[NUM_PC], cpu_instr.mn->opcode);
         switch (cpu_instr.mn->opcode) {
         case ADDW2:
         case ADDH2:
@@ -3211,7 +3213,7 @@ static SIM_INLINE t_bool invalid_destination(operand * oper)
 static SIM_INLINE uint32 sign_extend_b(uint8 val)
 {
     //return ((int8) val) & WORD_MASK;
-    if (val & 0x40)
+    if (val & 0x80)
         return ((uint32) val) | 0xffffff00;
     return (uint32) val;
 }
@@ -3224,7 +3226,7 @@ static SIM_INLINE uint32 zero_extend_b(uint8 val)
 static SIM_INLINE uint32 sign_extend_h(uint16 val)
 {
     //return ((int16) val) & WORD_MASK;
-    if (val & 0x4000)
+    if (val & 0x8000)
         return ((uint32) val) | 0xffff0000;
     return (uint32) val;
 }
