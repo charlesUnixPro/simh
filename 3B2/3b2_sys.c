@@ -98,7 +98,6 @@ t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
 t_stat parse_sym(CONST char *cptr, t_addr exta, UNIT *uptr, t_value *val, int32 sw)
 {
     DEVICE *dptr;
-    //uint32 addr = (uint32) exta;
     t_stat r;
     int32 k, num, vp;
     int32 len = 4;

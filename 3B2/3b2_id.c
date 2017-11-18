@@ -441,7 +441,6 @@ uint32 id_read(uint32 pa, size_t size) {
         sim_debug(READ_MSG, &id_dev,
                   "[%08x]\tSTATUS\t%02x\n",
                   R[NUM_PC], id_status|id_drq);
-        //return id_status|id_drq;
         return id_status|(id_drq ? 1u : 0);
     }
 

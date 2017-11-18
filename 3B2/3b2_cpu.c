@@ -689,7 +689,6 @@ t_stat cpu_set_hist(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
     uint32 i, size;
     t_stat result;
-    //instr *nINST = NULL;
 
     if (cptr == NULL) {
         /* Disable the feature */
@@ -1127,7 +1126,6 @@ uint8 decode_instruction(instr *instr)
     uint32 pa;
     mnemonic *mn = NULL;
     int i;
-    //t_stat succ;
 
     pa = R[NUM_PC];
 
@@ -1344,10 +1342,7 @@ t_bool cpu_on_interrupt(uint8 ipl)
 
 t_stat sim_instr(void)
 {
-    //instr i;
-
     uint8 et, isc;
-    //t_bool handled;
 
     /* Temporary register used for overflow detection */
     t_uint64 result;
@@ -1372,7 +1367,6 @@ t_stat sim_instr(void)
      * normal-exception, it needs to be treated as a stack-exception.
      */
     if (abort_reason != 0) {
-//sim_printf ("[%d] exception %d\n", (int) sim_gtime (), abort_reason);
         if (cpu_exception_stack_depth++ >= 10) {
             return STOP_ESTK;
         }
@@ -1518,7 +1512,6 @@ t_stat sim_instr(void)
             cpu_hist_p = (cpu_hist_p + 1) % cpu_hist_size;
         }
 
-//sim_printf ("[%d] ic %08x opcode %02x\n", (int) sim_gtime (), R[NUM_PC], cpu_instr.mn->opcode);
         switch (cpu_instr.mn->opcode) {
         case ADDW2:
         case ADDH2:
@@ -1568,7 +1561,6 @@ t_stat sim_instr(void)
         case BEH:
         case BEH_D:
             if (cpu_z_flag() == 1) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
@@ -1576,63 +1568,54 @@ t_stat sim_instr(void)
         case BEB:
         case BEB_D:
             if (cpu_z_flag() == 1) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
             break;
         case BGH:
             if ((cpu_n_flag() | cpu_z_flag()) == 0) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
             break;
         case BGB:
             if ((cpu_n_flag() | cpu_z_flag()) == 0) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
             break;
         case BGEH:
             if ((cpu_n_flag() == 0) | (cpu_z_flag() == 1)) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
             break;
         case BGEB:
             if ((cpu_n_flag() == 0) | (cpu_z_flag() == 1)) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
             break;
         case BGEUH:
             if (cpu_c_flag() == 0) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
             break;
         case BGEUB:
             if (cpu_c_flag() == 0) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
             break;
         case BGUH:
             if ((cpu_c_flag() | cpu_z_flag()) == 0) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
             break;
         case BGUB:
             if ((cpu_c_flag() | cpu_z_flag()) == 0) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
@@ -1649,56 +1632,48 @@ t_stat sim_instr(void)
             break;
         case BLH:
             if ((cpu_n_flag() == 1) && (cpu_z_flag() == 0)) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
             break;
         case BLB:
             if ((cpu_n_flag() == 1) && (cpu_z_flag() == 0)) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
             break;
         case BLEH:
             if ((cpu_n_flag() | cpu_z_flag()) == 1) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
             break;
         case BLEB:
             if ((cpu_n_flag() | cpu_z_flag()) == 1) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
             break;
         case BLEUH:
             if ((cpu_c_flag() | cpu_z_flag()) == 1) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
             break;
         case BLEUB:
             if ((cpu_c_flag() | cpu_z_flag()) == 1) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
             break;
         case BLUH:
             if (cpu_c_flag() == 1) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
             break;
         case BLUB:
             if (cpu_c_flag() == 1) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
@@ -1706,7 +1681,6 @@ t_stat sim_instr(void)
         case BNEH:
         case BNEH_D:
             if (cpu_z_flag() == 0) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
@@ -1714,7 +1688,6 @@ t_stat sim_instr(void)
         case BNEB:
         case BNEB_D:
             if (cpu_z_flag() == 0) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
@@ -1725,47 +1698,39 @@ t_stat sim_instr(void)
             cpu_abort(NORMAL_EXCEPTION, BREAKPOINT_TRAP);
             break;
         case BRH:
-            //R[NUM_PC] += (int16)(dst->embedded.h);
             R[NUM_PC] += sign_extend_h(dst->embedded.h);
             continue;
         case BRB:
-            //R[NUM_PC] += (int8)(dst->embedded.b);
             R[NUM_PC] += sign_extend_b(dst->embedded.b);
             continue;
         case BSBH:
             cpu_push_word(R[NUM_PC] + cpu_ilen);
-            //R[NUM_PC] += (int16)(dst->embedded.h);
             R[NUM_PC] += sign_extend_h(dst->embedded.h);
             continue;
         case BSBB:
             cpu_push_word(R[NUM_PC] + cpu_ilen);
-            //R[NUM_PC] += (int8)(dst->embedded.b);
             R[NUM_PC] += sign_extend_b(dst->embedded.b);
             continue;
         case BVCH:
             if (cpu_v_flag() == 0) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
             break;
         case BVCB:
             if (cpu_v_flag() == 0) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
             break;
         case BVSH:
             if (cpu_v_flag() == 1) {
-                //R[NUM_PC] += (int16)(dst->embedded.h);
                 R[NUM_PC] += sign_extend_h(dst->embedded.h);
                 continue;
             }
             break;
         case BVSB:
             if (cpu_v_flag() == 1) {
-                //R[NUM_PC] += (int8)(dst->embedded.b);
                 R[NUM_PC] += sign_extend_b(dst->embedded.b);
                 continue;
             }
@@ -1871,11 +1836,6 @@ t_stat sim_instr(void)
             }
 
             DIV(a, b, src1, dst, int32);
-            //result = (uint32)b / (uint32)a;
-//{
-//uint32 new = (int32) b / (int32) a;
-//assert ((result&WORD_MASK)==new);
-//}
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -1895,11 +1855,6 @@ t_stat sim_instr(void)
             }
 
             DIV(a, b, src1, dst, int16);
-            //result = (uint16)b / (uint16)a;
-//{
-//uint32 new = (int16) b / (int16) a;
-//assert ((result&WORD_MASK)==new);
-//}
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -1938,11 +1893,6 @@ t_stat sim_instr(void)
             }
 
             DIV(a, b, src1, src2, int32);
-            //result = (uint32)b / (uint32)a;
-//{
-//uint32 new = (int32) b / (int32) a;
-//assert ((result&WORD_MASK)==new);
-//}
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -1962,11 +1912,6 @@ t_stat sim_instr(void)
             }
 
             DIV(a, b, src1, src2, int16);
-            //result = (uint16)b / (uint16)a;
-//{
-//uint32 new = (int16) b / (int16) a;
-//assert ((result&WORD_MASK)==new);
-//}
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -2249,11 +2194,6 @@ t_stat sim_instr(void)
                 break;
             }
             MOD(a, b, src1, dst, int32);
-            //result = (uint32) b % (uint32) a;
-//{
-//uint32 new = (int32) b % (int32) a;
-//assert ((result&WORD_MASK)==new);
-//}
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
@@ -2267,11 +2207,6 @@ t_stat sim_instr(void)
                 break;
             }
             MOD(a, b, src1, dst, int16);
-            //result = (uint16) b % (uint16) a;
-//{
-//uint32 new = (int16) b % (int16) a;
-//assert ((result&WORD_MASK)==new);
-//}
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
@@ -2299,11 +2234,6 @@ t_stat sim_instr(void)
                 break;
             }
             MOD(a, b, src1, src2, int32);
-            //result = (uint32) b % (uint32) a;
-//{
-//uint32 new = (int32) b % (int32) a;
-//assert ((result&WORD_MASK)==new);
-//}
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
@@ -2317,11 +2247,6 @@ t_stat sim_instr(void)
                 break;
             }
             MOD(a, b, src1, src2, int16);
-            //result = (uint16) b % (uint16) a;
-//{
-//uint32 new = (int16) b % (int16) a;
-//assert ((result&WORD_MASK)==new);
-//}
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
@@ -2868,56 +2793,48 @@ static uint32 cpu_effective_address(operand *op)
 
     /* FP Short Offset */
     if (op->mode == 6 && op->reg != 15) {
-        //op->data = R[NUM_FP] + (int8)op->embedded.b;
         op->data = R[NUM_FP] + sign_extend_b(op->embedded.b);
         return op->data;
     }
 
     /* AP Short Offset */
     if (op->mode == 7 && op->reg != 15) {
-        //op->data = R[NUM_AP] + (int8)op->embedded.b;
         op->data = R[NUM_AP] + sign_extend_b(op->embedded.b);
         return op->data;
     }
 
     /* Word Displacement */
     if (op->mode == 8) {
-        //op->data = R[op->reg] + (int32)op->embedded.w;
         op->data = R[op->reg] + op->embedded.w;
         return op->data;
     }
 
     /* Word Displacement Deferred */
     if (op->mode == 9) {
-        //op->data = read_w(R[op->reg] + (int32)op->embedded.w, ACC_AF);
         op->data = read_w(R[op->reg] + op->embedded.w, ACC_AF);
         return op->data;
     }
 
     /* Halfword Displacement */
     if (op->mode == 10) {
-        //op->data = R[op->reg] + (int16)op->embedded.h;
         op->data = R[op->reg] + sign_extend_h(op->embedded.h);
         return op->data;
     }
 
     /* Halfword Displacement Deferred */
     if (op->mode == 11) {
-        //op->data = read_w(R[op->reg] + (int16)op->embedded.h, ACC_AF);
         op->data = read_w(R[op->reg] + sign_extend_h(op->embedded.h), ACC_AF);
         return op->data;
     }
 
     /* Byte Displacement */
     if (op->mode == 12) {
-        //op->data = R[op->reg] + (int8)op->embedded.b;
         op->data = R[op->reg] + sign_extend_b(op->embedded.b);
         return op->data;
     }
 
     /* Byte Displacement Deferred */
     if (op->mode == 13) {
-        //op->data = read_w(R[op->reg] + (int8)op->embedded.b, ACC_AF);
         op->data = read_w(R[op->reg] + sign_extend_b(op->embedded.b), ACC_AF);
         return op->data;
     }
@@ -2995,7 +2912,6 @@ static uint32 cpu_effective_address(operand *op)
 static uint32 cpu_read_op(operand * op)
 {
     uint32 eff;
-    //uint32 val = 0;
     uint32 data;
 
     /* Register */
@@ -3248,7 +3164,6 @@ static SIM_INLINE t_bool invalid_destination(operand * oper)
 
 static SIM_INLINE uint32 sign_extend_b(uint8 val)
 {
-    //return ((int8) val) & WORD_MASK;
     if (val & 0x80)
         return ((uint32) val) | 0xffffff00;
     return (uint32) val;
@@ -3261,7 +3176,6 @@ static SIM_INLINE uint32 zero_extend_b(uint8 val)
 
 static SIM_INLINE uint32 sign_extend_h(uint16 val)
 {
-    //return ((int16) val) & WORD_MASK;
     if (val & 0x8000)
         return ((uint32) val) | 0xffff0000;
     return (uint32) val;
