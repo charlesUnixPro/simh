@@ -133,7 +133,7 @@ static DEBTAB cpu_deb_tab[] = {
     { NULL,         0                                       }
 };
 
-UNIT cpu_unit = { UDATA (NULL, UNIT_FIX|UNIT_BINK|UNIT_IDLE, MAXMEMSIZE) };
+UNIT cpu_unit = { UDATA (NULL, UNIT_FIX|UNIT_BINK, MAXMEMSIZE) };
 
 #define UNIT_V_EXHALT   (UNIT_V_UF + 0)                 /* halt to console */
 #define UNIT_EXHALT     (1u << UNIT_V_EXHALT)
@@ -145,8 +145,6 @@ MTAB cpu_mod[] = {
       &cpu_set_size, NULL, NULL, "Set Memory to 2M bytes" },
     { UNIT_MSIZE, (1u << 22), NULL, "4M",
       &cpu_set_size, NULL, NULL, "Set Memory to 4M bytes" },
-    { MTAB_XTD|MTAB_VDV, 0, "IDLE", "IDLE", &sim_set_idle, &sim_show_idle },
-    { MTAB_XTD|MTAB_VDV, 0, NULL, "NOIDLE", &sim_clr_idle, NULL },
     { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "HISTORY", "HISTORY",
       &cpu_set_hist, &cpu_show_hist, NULL, "Displays instruction history" },
     { UNIT_EXHALT, UNIT_EXHALT, "Halt on Exception", "EX_HALT",
@@ -631,7 +629,7 @@ t_stat cpu_reset(DEVICE *dptr)
     cpu_nmi = FALSE;
 
     cpu_hist_p = 0;
-    cpu_in_wait = FALSE;
+    cpu_in_wait = 0;
 
     sim_brk_types = SWMASK('E');
     sim_brk_dflt = SWMASK('E');
@@ -1301,10 +1299,6 @@ t_bool cpu_on_interrupt(uint8 ipl)
     uint32 new_pcbp;
     uint16 id = ipl; /* TODO: Does this need to be uint16? */
 
-    if (ipl == 15 && (csr_data & CSRCLK)) {
-        sim_rtcn_tick_ack(20, CLK_TMR);
-    }
-
     /*
      * "If a nonmaskable interrupt request is received, an auto-vector
      * interrupt acknowledge cycle is performed (as if an autovector
@@ -1484,9 +1478,6 @@ t_stat sim_instr(void)
         }
 
         if (cpu_in_wait) {
-            if (sim_idle_enab) {
-                sim_idle(CLK_TMR, TRUE);
-            }
             continue;
         }
 
