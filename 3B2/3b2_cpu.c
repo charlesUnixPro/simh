@@ -1870,8 +1870,12 @@ t_stat sim_instr(void)
                 cpu_set_v_flag(1);
             }
 
-            //DIV(a, b, src1, dst, int32);
-            result = (uint32)b / (uint32)a;
+            DIV(a, b, src1, dst, int32);
+            //result = (uint32)b / (uint32)a;
+//{
+//uint32 new = (int32) b / (int32) a;
+//assert ((result&WORD_MASK)==new);
+//}
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -1890,8 +1894,12 @@ t_stat sim_instr(void)
                 cpu_set_v_flag(1);
             }
 
-            //DIV(a, b, src1, dst, int16);
-            result = (uint16)b / (uint16)a;
+            DIV(a, b, src1, dst, int16);
+            //result = (uint16)b / (uint16)a;
+//{
+//uint32 new = (int16) b / (int16) a;
+//assert ((result&WORD_MASK)==new);
+//}
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -1929,8 +1937,12 @@ t_stat sim_instr(void)
                 cpu_set_v_flag(1);
             }
 
-            //DIV(a, b, src1, src2, int32);
-            result = (uint32)b / (uint32)a;
+            DIV(a, b, src1, src2, int32);
+            //result = (uint32)b / (uint32)a;
+//{
+//uint32 new = (int32) b / (int32) a;
+//assert ((result&WORD_MASK)==new);
+//}
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -1949,8 +1961,12 @@ t_stat sim_instr(void)
                 cpu_set_v_flag(1);
             }
 
-            //DIV(a, b, src1, src2, int16);
-            result = (uint16)b / (uint16)a;
+            DIV(a, b, src1, src2, int16);
+            //result = (uint16)b / (uint16)a;
+//{
+//uint32 new = (int16) b / (int16) a;
+//assert ((result&WORD_MASK)==new);
+//}
 
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -2233,6 +2249,11 @@ t_stat sim_instr(void)
                 break;
             }
             MOD(a, b, src1, dst, int32);
+            //result = (uint32) b % (uint32) a;
+//{
+//uint32 new = (int32) b % (int32) a;
+//assert ((result&WORD_MASK)==new);
+//}
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
@@ -2246,6 +2267,11 @@ t_stat sim_instr(void)
                 break;
             }
             MOD(a, b, src1, dst, int16);
+            //result = (uint16) b % (uint16) a;
+//{
+//uint32 new = (int16) b % (int16) a;
+//assert ((result&WORD_MASK)==new);
+//}
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
@@ -2273,6 +2299,11 @@ t_stat sim_instr(void)
                 break;
             }
             MOD(a, b, src1, src2, int32);
+            //result = (uint32) b % (uint32) a;
+//{
+//uint32 new = (int32) b % (int32) a;
+//assert ((result&WORD_MASK)==new);
+//}
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
@@ -2286,6 +2317,11 @@ t_stat sim_instr(void)
                 break;
             }
             MOD(a, b, src1, src2, int16);
+            //result = (uint16) b % (uint16) a;
+//{
+//uint32 new = (int16) b % (int16) a;
+//assert ((result&WORD_MASK)==new);
+//}
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
@@ -3170,7 +3206,7 @@ static SIM_INLINE int8 op_type(operand *op) {
 }
 
 static SIM_INLINE t_bool op_signed(operand *op) {
-    return (op_type(op) == WD || op_type(op) == HW || op_type(op) == BT);
+    return (op_type(op) == WD || op_type(op) == HW || op_type(op) == SB);
 }
 
 static SIM_INLINE t_bool is_byte_immediate(operand * oper)
