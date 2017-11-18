@@ -557,10 +557,7 @@ uint32 timer_read(uint32 pa, size_t size)
 
 void handle_timer_write(uint8 ctrnum, uint32 val)
 {
-    int32 t, ticks;
     struct timer_ctr *ctr;
-
-    UNIT *uptr = &timer_unit[1];
 
     ctr = &TIMERS[ctrnum];
     switch(ctr->mode & 0x30) {
