@@ -394,8 +394,9 @@ void dmac_transfer(uint8 channel, uint32 service_address)
                   dma_address(channel, 0, TRUE));
         offset = 0;
         for (i = chan->wcount; i >= 0; i--) {
-            addr = dma_address(channel, offset++, TRUE);
-            chan->addr_c = addr;
+            addr = dma_address(channel, offset, TRUE);
+            chan->addr_c = dma_state.channels[channel].addr + offset;
+            offset++;
             data = pread_b(service_address);
             write_b(addr, data);
         }
@@ -409,7 +410,7 @@ void dmac_transfer(uint8 channel, uint32 service_address)
         offset = 0;
         for (i = chan->wcount; i >= 0; i--) {
             addr = dma_address(channel, offset++, TRUE);
-            chan->addr_c = addr;
+            chan->addr_c = dma_state.channels[channel].addr + offset;
             data = pread_b(addr);
             write_b(service_address, data);
         }

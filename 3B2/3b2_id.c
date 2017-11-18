@@ -133,7 +133,7 @@ uint8    id_lhn = 0;
 /* Logical sector number */
 uint8    id_lsn = 0;
 /* Number of sectors to transfer, decremented after each sector */
-int16    id_scnt = 0;
+uint8    id_scnt = 0;
 /* Sector buffer */
 uint8    id_buf[ID_SEC_SIZE];
 /* Buffer pointer */
@@ -440,7 +440,7 @@ uint32 id_read(uint32 pa, size_t size) {
         sim_debug(READ_MSG, &id_dev,
                   "[%08x]\tSTATUS\t%02x\n",
                   R[NUM_PC], id_status|id_drq);
-        return id_status|id_drq;
+        return id_status|(id_drq ? 1u : 0);
     }
 
     sim_debug(READ_MSG, &id_dev,
@@ -546,7 +546,8 @@ void id_write(uint32 pa, uint32 val, size_t size)
 
 void id_handle_command(uint8 val)
 {
-    uint8 cmd, aux_cmd, data, sec, pattern;
+    uint8 cmd, aux_cmd, sec, pattern;
+    uint16 cyl;
     uint32 time;
     t_lba lba;
 
@@ -652,7 +653,7 @@ void id_handle_command(uint8 val)
                   "[%08x]\tCOMMAND\t%02x\tRecalibrate - %d\n",
                   R[NUM_PC], val, UNIT_NUM);
         id_cyl[UNIT_NUM] = 0;
-        time = abs(id_cyl[UNIT_NUM] - data);
+        time = id_cyl[UNIT_NUM];
         id_activate(DELAY_US(ID_RECAL_WAIT + (time * ID_SEEK_WAIT)));
         id_seek_sis = TRUE;
         break;
@@ -662,10 +663,10 @@ void id_handle_command(uint8 val)
                   R[NUM_PC], val, UNIT_NUM);
         id_lcnh = id_data[0];
         id_lcnl = id_data[1];
-        data = id_lcnh << 8 | id_lcnl;
-        time = abs(id_cyl[UNIT_NUM] - data);
+        cyl = id_lcnh << 8 | id_lcnl;
+        time = abs(id_cyl[UNIT_NUM] - cyl);
         id_activate(DELAY_US(ID_SEEK_BASE + (ID_SEEK_WAIT * time)));
-        id_cyl[UNIT_NUM] = data;
+        id_cyl[UNIT_NUM] = cyl;
         id_seek_sis = TRUE;
         break;
     case ID_CMD_FMT:
