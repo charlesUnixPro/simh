@@ -290,9 +290,14 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define CLK_MD4   0x08
 #define CLK_MD5   0x0a
 
-#define CLK_TIM0  0          /* 8253 Timer 0 (A)  */
-#define CLK_TIM1  1          /* 8253 Timer 1 (B)  */
-#define CLK_TIM2  2          /* 8253 Timer 2 (C)  */
+/* Timer definitions */
+
+#define TMR_CLK 0   /* The clock responsible for IPL 15 interrupts */
+#define TMR_TOD 1   /* The Time-of-Day clock */
+
+#define TPS_CLK 100
+#define TPS_TOD 10
+
 
 /* TIMING SECTION                                  */
 /* ----------------------------------------------- */

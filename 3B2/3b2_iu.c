@@ -172,7 +172,7 @@ t_stat iu_svc_tti(UNIT *uptr)
 {
     int32 temp;
 
-    sim_activate(uptr, uptr->wait);
+    sim_clock_coschedule_tmr_abs(uptr, TMR_CLK, 2);
 
     /* TODO:
 
@@ -192,7 +192,6 @@ t_stat iu_svc_tti(UNIT *uptr)
         iu_state.port[PORT_A].buf = (temp & 0xff);
         iu_state.port[PORT_A].stat |= STS_RXR;
         iu_state.istat |= ISTS_RAI;
-        /* iu_state.drqa = TRUE; */
         if (iu_state.imr & 0x02) {
             sim_debug(EXECUTE_MSG, &iu_dev,
                       "Firing IU TTY IRQ 13 ON RECEIVE (%c)\n",

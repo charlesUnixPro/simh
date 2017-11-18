@@ -41,11 +41,6 @@ extern DEVICE csr_dev;
 extern DEVICE tod_dev;
 extern DEBTAB sys_deb_tab[];
 
-#define CLK_TMR 0   /* The clock responsible for IPL 15 interrupts */
-#define CLK_TOD 1   /* The Time-of-Day clock */
-
-#define TMR_WAIT  25000
-
 struct timer_ctr {
     uint16 divider;
     uint8  mode;
@@ -54,9 +49,6 @@ struct timer_ctr {
     t_bool gate;
     double stime;     /* Most recent start time of counter */
 };
-
-#define CTRNUM   u3
-#define TIMER    up7
 
 /* NVRAM */
 t_stat nvram_ex(t_value *vptr, t_addr exta, UNIT *uptr, int32 sw);

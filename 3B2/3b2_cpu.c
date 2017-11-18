@@ -1481,7 +1481,7 @@ t_stat sim_instr(void)
 
         if (cpu_in_wait) {
             if (sim_idle_enab) {
-                sim_idle(CLK_TMR, TRUE);
+                sim_idle(TMR_CLK, TRUE);
             }
             continue;
         }

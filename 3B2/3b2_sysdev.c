@@ -377,9 +377,9 @@ struct timer_ctr TIMERS[3];
  */
 
 UNIT timer_unit[] = {
-    { UDATA(&timer0_svc, 0, 0), TMR_WAIT },
-    { UDATA(&timer1_svc, UNIT_IDLE, 0), TMR_WAIT },
-    { UDATA(&timer2_svc, 0, 0), TMR_WAIT },
+    { UDATA(&timer0_svc, 0, 0) },
+    { UDATA(&timer1_svc, UNIT_IDLE, 0) },
+    { UDATA(&timer2_svc, 0, 0) },
     { NULL }
 };
 
@@ -434,10 +434,10 @@ t_stat timer_reset(DEVICE *dptr) {
     /* Timer 1 gate is always active */
     TIMERS[1].gate = 1;
 
-    t = sim_rtcn_init_unit(&timer_unit[1], timer_unit[1].wait, CLK_TMR);
-
-    /* We do not activate the timer yet. Wait for software to do
-       that. */
+    if (!sim_is_running) {
+        t = sim_rtcn_init_unit(&timer_unit[1], TPS_CLK, TMR_CLK);
+        sim_activate_after(&timer_unit[1], 1000000 / t);
+    }
 
     return SCPE_OK;
 }
@@ -464,21 +464,22 @@ t_stat timer0_svc(UNIT *uptr)
 t_stat timer1_svc(UNIT *uptr)
 {
     struct timer_ctr *ctr;
-    int32 t;
-    int32 ticks;
+    int32 t, ticks;
 
     ctr = (struct timer_ctr *)uptr->tmr;
 
     if (ctr->enabled && ctr->gate) {
-
         /* Fire the IPL 15 clock interrupt */
         csr_data |= CSRCLK;
-
-        ticks = ctr->divider / TIMER_STP_US;
-        t = sim_rtcn_calb(ticks, CLK_TMR);
-        sim_activate_after(uptr, 1000000 / ticks);
-        ctr->stime = TIMER_START_TIME;
     }
+
+    ticks = ctr->divider / TIMER_STP_US;
+    t = sim_rtcn_calb(ticks, TMR_CLK);
+    if (ticks == 0) {
+        ticks = TPS_CLK;
+    }
+    sim_activate_after(uptr, 1000000 / ticks);
+    ctr->stime = TIMER_START_TIME;
 
     return SCPE_OK;
 }
@@ -520,21 +521,7 @@ uint32 timer_read(uint32 pa, size_t size)
         /* TODO: Fix this hacky mess */
         if (ctr->gate && ctr->enabled) {
             decr = timer_decr(ctr);
-
-            if (ctrnum == 1) {
-                sim_debug(READ_MSG, &timer_dev,
-                          "[%08x] Counter 1 initial val = %04x decrementing by %d steps\n",
-                          R[NUM_PC], ctr->divider, decr);
-            }
-
             ctr_val = ctr->divider - decr;
-
-            if (ctrnum == 1) {
-                sim_debug(READ_MSG, &timer_dev,
-                          "[%08x] Counter 1 now = %04x\n",
-                          R[NUM_PC], ctr_val);
-            }
-
             if (ctr_val < 0) {
                 ctr_val = 0;
             }
@@ -585,34 +572,19 @@ void handle_timer_write(uint8 ctrnum, uint32 val)
         ctr->divider |= val & 0xff;
         ctr->enabled = TRUE;
         ctr->stime = TIMER_START_TIME;
-        time = DELAY_US(ctr->divider * TIMER_STP_US);
-        sim_activate_abs(&timer_unit[ctrnum], time);
-        sim_debug(EXECUTE_MSG, &timer_dev,
-                  "[Lower] [divider=%04x] Setting timer %d to fire in %d steps.\n",
-                  ctr->divider, ctrnum, time);
         break;
     case 0x20:
         ctr->divider &= 0x00ff;
         ctr->divider |= (val & 0xff) << 8;
         ctr->enabled = TRUE;
         ctr->stime = TIMER_START_TIME;
-        time = DELAY_US(ctr->divider * TIMER_STP_US);
-        sim_activate_abs(&timer_unit[ctrnum], time);
-        sim_debug(EXECUTE_MSG, &timer_dev,
-                  "[Upper] [divider=%04x] Setting timer %d to fire in %d steps.\n",
-                  ctr->divider, ctrnum, time);
         break;
     case 0x30:
         if (ctr->lmb) {
             ctr->lmb = FALSE;
             ctr->divider = (ctr->divider & 0x00ff) | ((val & 0xff) << 8);
-            ctr->stime = TIMER_START_TIME;
-            time = DELAY_US(ctr->divider * TIMER_STP_US);
-            sim_activate_abs(&timer_unit[ctrnum], time);
-            sim_debug(EXECUTE_MSG, &timer_dev,
-                      "[Lower/Upper] [divider=%04x] Setting timer %d to fire in %d steps.\n",
-                      ctr->divider, ctrnum, time);
             ctr->enabled = TRUE;
+            ctr->stime = TIMER_START_TIME;
         } else {
             ctr->lmb = TRUE;
             ctr->divider = (ctr->divider & 0xff00) | (val & 0xff);
@@ -663,7 +635,6 @@ void timer_write(uint32 pa, uint32 val, size_t size)
         ctr->mode = val;
         ctr->enabled = FALSE;
         ctr->lmb = FALSE;
-        sim_cancel(&timer_unit[ctrnum]);
         break;
     case TIMER_CLR_LATCH:
         sim_debug(WRITE_MSG, &timer_dev,
@@ -676,7 +647,7 @@ void timer_write(uint32 pa, uint32 val, size_t size)
  * MM58174A Real-Time-Clock
  */
 
-UNIT tod_unit = { UDATA(&tod_svc, UNIT_IDLE+UNIT_FIX, 0), DELAY_MS(100) };
+UNIT tod_unit = { UDATA(&tod_svc, UNIT_IDLE+UNIT_FIX, 0) };
 
 uint32 tod_reg = 0;
 
@@ -688,8 +659,6 @@ DEVICE tod_dev = {
     DEV_DEBUG, 0, sys_deb_tab
 };
 
-#define CLK_TICKS 10  /* Ten clicks per second */
-
 t_stat tod_reset(DEVICE *dptr)
 {
     int32 t;
@@ -698,8 +667,8 @@ t_stat tod_reset(DEVICE *dptr)
     tod_reg = 596966400;
 
     if (!sim_is_running) {
-        t = sim_rtcn_init_unit(&tod_unit, tod_unit.wait, CLK_TOD);
-        sim_activate_after(&tod_unit, 1000000 / CLK_TICKS);
+        t = sim_rtcn_init_unit(&tod_unit, TPS_TOD, TMR_TOD);
+        sim_activate_after(&tod_unit, 1000000 / TPS_TOD);
     }
 
     return SCPE_OK;
@@ -709,8 +678,8 @@ t_stat tod_svc(UNIT *uptr)
 {
     int32 t;
 
-    t = sim_rtcn_calb(CLK_TICKS, CLK_TOD);
-    sim_activate_after(&tod_unit, 1000000 / CLK_TICKS);
+    t = sim_rtcn_calb(TPS_TOD, TMR_TOD);
+    sim_activate_after(&tod_unit, 1000000 / TPS_TOD);
 
     tod_reg++;
     return SCPE_OK;
