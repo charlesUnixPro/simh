@@ -677,6 +677,10 @@ t_stat mmu_decode_va(uint32 va, uint8 r_acc, t_bool fc, uint32 *pa)
 {
     uint32 sd0, sd1, pd;
     uint8 pd_acc;
+
+    sd0 = sd1 = pd = 0xdeadbeef;
+    pd_acc = 0xef;
+
     t_stat sd_cached, pd_cached, succ;
 
     if (!mmu_enabled()) {
