@@ -133,7 +133,7 @@ void increment_modep_b()
 }
 
 void iu_txrdy_irq(uint8 portno) {
-    uint8 irq_mask = 1 << (portno * 4);
+    uint8 irq_mask = (uint8) (1u << (portno * 4));
 
     if ((iu_state.imr & irq_mask) &&
         (iu_state.port[portno].conf & TX_EN) &&
@@ -251,9 +251,8 @@ uint32 iu_read(uint32 pa, size_t size)
 {
     uint8 reg, modep;
     uint32 data, delay;
-    int32 time;
 
-    reg = pa - IUBASE;
+    reg = (uint8) (pa - IUBASE);
 
     switch (reg) {
     case MR12A:
@@ -306,8 +305,8 @@ uint32 iu_read(uint32 pa, size_t size)
     case START_CTR:
         data = 0;
         iu_state.istat &= ~ISTS_CRI;
-        delay = IU_TIMER_STP * iu_state.c_set;
-        sim_activate_abs(&iu_unit[UNIT_IU_TIMER], DELAY_US(delay));
+        delay = (uint32) (IU_TIMER_STP * iu_state.c_set);
+        sim_activate_abs(&iu_unit[UNIT_IU_TIMER], (int32) DELAY_US(delay));
         break;
     case STOP_CTR:
         data = 0;
@@ -334,7 +333,7 @@ void iu_write(uint32 pa, uint32 val, size_t size)
     uint8 reg;
     uint8 modep;
 
-    reg = pa - IUBASE;
+    reg = (uint8) (pa - IUBASE);
 
     switch (reg) {
     case MR12A:
@@ -346,24 +345,24 @@ void iu_write(uint32 pa, uint32 val, size_t size)
         /* Set baud rate - not implemented */
         break;
     case CRA:  /* Command A */
-        iu_w_cmd(PORT_A, val);
+        iu_w_cmd(PORT_A, (uint8) val);
         break;
     case THRA:  /* TX/RX Buf A */
         /* Loopback mode */
         if ((iu_state.port[PORT_A].mode[1] & 0xc0) == 0x80) {
-            iu_state.port[PORT_A].buf = val;
+            iu_state.port[PORT_A].buf = (uint8) val;
             iu_state.port[PORT_A].stat |= STS_RXR;
             iu_state.istat |= ISTS_RAI;
         } else {
-            iu_tx(PORT_A, val);
+            iu_tx(PORT_A, (uint8) val);
         }
         csr_data &= ~CSRUART;
         break;
     case ACR:  /* Auxiliary Control Register */
-        iu_state.acr = val;
+        iu_state.acr = (uint8) val;
         break;
     case IMR:
-        iu_state.imr = val;
+        iu_state.imr = (uint8) val;
         csr_data &= ~CSRUART;
         /* Possibly cause an interrupt */
         sim_debug(EXECUTE_MSG, &iu_dev,
@@ -389,22 +388,22 @@ void iu_write(uint32 pa, uint32 val, size_t size)
         iu_increment_b = TRUE;
         break;
     case CRB:  /* Command B */
-        iu_w_cmd(PORT_B, val);
+        iu_w_cmd(PORT_B, (uint8) val);
         break;
     case CSRB:
         break;
     case THRB: /* TX/RX Buf B */
         /* Loopback mode */
         if ((iu_state.port[PORT_B].mode[1] & 0xc0) == 0x80) {
-            iu_state.port[PORT_B].buf = val;
+            iu_state.port[PORT_B].buf = (uint8) val;
             iu_state.port[PORT_B].stat |= STS_RXR;
             iu_state.istat |= ISTS_RAI;
         } else {
-            iu_tx(PORT_B, val);
+            iu_tx(PORT_B, (uint8) val);
         }
         break;
     case OPCR:
-        iu_state.opcr = val;
+        iu_state.opcr = (uint8) val;
         break;
     case SOPR:
         break;

@@ -3365,7 +3365,7 @@ static void cpu_set_nz_flags(t_uint64 data, operand *dst)
     switch (type) {
     case WD:
     case UW:
-        cpu_set_n_flag(WD_MSB & data);
+        cpu_set_n_flag(!!(WD_MSB & data));
         cpu_set_z_flag((data & WORD_MASK) == 0);
         break;
     case HW:
@@ -3446,7 +3446,7 @@ static SIM_INLINE void add(t_uint64 a, t_uint64 b, operand *dst)
     case WD:
     case UW:
         cpu_set_c_flag(result > WORD_MASK);
-        cpu_set_v_flag(((a ^ ~b) & (a ^ result)) & WD_MSB);
+        cpu_set_v_flag(!! (((a ^ ~b) & (a ^ result)) & WD_MSB));
         break;
     case HW:
     case UH:
@@ -3471,7 +3471,7 @@ SIM_INLINE void cpu_abort(uint8 et, uint8 isc)
         R[NUM_PSW] &= ~(PSW_ISC_MASK); /* Clear ISC */
         R[NUM_PSW] &= ~(PSW_ET_MASK);  /* Clear ET  */
         R[NUM_PSW] |= et;              /* Set ET    */
-        R[NUM_PSW] |= isc << PSW_ISC;  /* Set ISC   */
+        R[NUM_PSW] |= (uint32) (isc << PSW_ISC);  /* Set ISC   */
 
         if (et == 3 && (isc == BREAKPOINT_TRAP ||
                         isc == INTEGER_OVERFLOW ||

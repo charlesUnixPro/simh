@@ -75,7 +75,7 @@ const char *sim_stop_messages[] = {
 t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
 {
     int32 i;
-    int32 addr = 0;
+    uint32 addr = 0;
     int32 cnt = 0;
 
     if ((*cptr != 0) || (flag != 0)) {
@@ -85,7 +85,7 @@ t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
     addr = R[NUM_PC];
 
     while ((i = getc (fileref)) != EOF) {
-        pwrite_b(addr, i);
+        pwrite_b(addr, (uint8)i);
         addr++;
         cnt++;
     }
@@ -98,16 +98,16 @@ t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
 t_stat parse_sym(CONST char *cptr, t_addr exta, UNIT *uptr, t_value *val, int32 sw)
 {
     DEVICE *dptr;
-    uint32 addr = (uint32) exta;
+    //uint32 addr = (uint32) exta;
     t_stat r;
     int32 k, num, vp;
     int32 len = 4;
 
-    if (sw & SWMASK ('B')) {
+    if (sw & (int32) SWMASK ('B')) {
         len = 1;
-    } else if (sw & SWMASK ('H')) {
+    } else if (sw & (int32) SWMASK ('H')) {
         len = 2;
-    } else if (sw & SWMASK ('W')) {
+    } else if (sw & (int32) SWMASK ('W')) {
         len = 4;
     }
 
@@ -145,22 +145,22 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
     num = 0;
     vp = 0;
 
-    if (sw & SWMASK ('B')) {
+    if (sw & (int32) SWMASK ('B')) {
         len = 1;
-    } else if (sw & SWMASK ('H')) {
+    } else if (sw & (int32) SWMASK ('H')) {
         len = 2;
-    } else if (sw & SWMASK ('W')) {
+    } else if (sw & (int32) SWMASK ('W')) {
         len = 4;
     }
 
-    if (sw & SWMASK('M')) {
+    if (sw & (int32) SWMASK('M')) {
         fprint_sym_m(of, &cpu_instr);
         return SCPE_OK;
     }
 
-    if (sw & SWMASK('C')) {
+    if (sw & (int32) SWMASK('C')) {
         len = 16;
-        for (k = len - 1; k >= 0; k--) {
+        for (k = (int32) len - 1; k >= 0; k--) {
             c = (unsigned int)val[vp++];
             if (c >= 0x20 && c < 0x7f) {
                 fprintf(of, "%c", c);

@@ -190,7 +190,7 @@ void mmu_write(uint32 pa, uint32 val, size_t size)
         mmu_state.sra[offset] = val;
         mmu_state.sec[offset].addr = val & 0xffffffe0;
         /* We flush the entire section on writing SRAMA */
-        flush_cache_sec(offset);
+        flush_cache_sec((uint8) offset);
         sim_debug(WRITE_MSG, &mmu_dev,
                   "[%08x] MMU_SRAMA[%d] = %08x (addr=%08x)\n",
                   R[NUM_PC], offset, val, mmu_state.sec[offset].addr);
@@ -329,7 +329,7 @@ uint16 pread_h(uint32 pa)
     }
 
     if (addr_is_io(pa)) {
-        return io_read(pa, 16);
+        return (uint16) io_read(pa, 16);
     }
 
     if (addr_is_rom(pa)) {
@@ -390,7 +390,7 @@ void pwrite_h(uint32 pa, uint16 val)
  */
 uint8 pread_b(uint32 pa)
 {
-    int32 data;
+    uint32 data;
     int32 sc = (~(pa & 3) << 3) & 0x1f;
 
     if (addr_is_io(pa)) {
@@ -416,7 +416,7 @@ void pwrite_b(uint32 pa, uint8 val)
     uint32 *m;
     int32 index;
     int32 sc = (~(pa & 3) << 3) & 0x1f;
-    int32 mask = 0xff << sc;
+    uint32 mask = 0xffu << sc;
 
     if (addr_is_io(pa)) {
         io_write(pa, val, 8);
@@ -426,7 +426,7 @@ void pwrite_b(uint32 pa, uint8 val)
     if (addr_is_mem(pa)) {
         m = RAM;
         index = (pa - PHYS_MEM_BASE) >> 2;
-        m[index] = (m[index] & ~mask) | (val << sc);
+        m[index] = (m[index] & ~mask) | (uint) (val << sc);
         return;
     }
 }
@@ -677,11 +677,7 @@ t_stat mmu_decode_va(uint32 va, uint8 r_acc, t_bool fc, uint32 *pa)
 {
     uint32 sd0, sd1, pd;
     uint8 pd_acc;
-
-    sd0 = sd1 = pd = 0xdeadbeef;
-    pd_acc = 0xef;
-
-    t_stat sd_cached, pd_cached, succ;
+    t_stat sd_cached, pd_cached;
 
     if (!mmu_enabled()) {
         *pa = va;

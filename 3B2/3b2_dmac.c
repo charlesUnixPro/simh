@@ -81,7 +81,7 @@ uint32 dmac_read(uint32 pa, size_t size)
 {
     uint8 reg, base, data;
 
-    base = pa >> 12;
+    base =(uint8) (pa >> 12);
     reg = pa & 0xff;
 
     switch (base) {
@@ -171,7 +171,7 @@ uint32 dmac_read(uint32 pa, size_t size)
  */
 void dmac_program(uint8 reg, uint8 val)
 {
-    uint8 channel_id, i, ad, chan_num;
+    uint8 channel_id, i, chan_num;
     dma_channel *channel;
 
     if (reg < 8) {
@@ -338,19 +338,19 @@ void dmac_write(uint32 pa, uint32 val, size_t size)
 {
     uint8 reg, base;
 
-    base = pa >> 12;
+    base = (uint8) (pa >> 12);
     reg = pa & 0xff;
 
     switch (base) {
     case DMA_C:     /* 0x48xxx */
-        dmac_program(reg, val);
+        dmac_program(reg, (uint8) val);
         break;
 
     case DMA_ID:    /* 0x45xxx */
     case DMA_IUA:   /* 0x46xxx */
     case DMA_IUB:   /* 0x47xxx */
     case DMA_IF:    /* 0x4Exxx */
-        dmac_page_update(base, reg, val);
+        dmac_page_update(base, reg, (uint8) val);
         break;
     }
 }
@@ -363,7 +363,7 @@ static SIM_INLINE uint32 dma_address(uint8 channel, uint32 offset, t_bool r) {
             offset);
 
     /* The top bit of the page address is a R/W bit, so we mask it here */
-    addr |= (dma_state.channels[channel].page & 0x7f) << 16;
+    addr |= (uint32) (((uint32)dma_state.channels[channel].page & 0x7f) << 16);
 
     return addr;
 }

@@ -278,7 +278,7 @@
 /* Fault codes */
 #define MMU_FAULT(f) {                                      \
         if (fc) {                                           \
-            mmu_state.fcode = ((r_acc<<7)|(CPU_CM<<5)|f);   \
+            mmu_state.fcode = ((((uint32)r_acc)<<7)|(((uint32)(CPU_CM))<<5)|f);   \
             mmu_state.faddr = va;                           \
         }                                                   \
     }
