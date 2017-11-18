@@ -377,9 +377,9 @@ struct timer_ctr TIMERS[3];
  */
 
 UNIT timer_unit[] = {
-    { UDATA(&timer0_svc, 0, 0), TMR_WAIT },
+    { UDATA(NULL, 0, 0), TMR_WAIT },
     { UDATA(&timer1_svc, 0, 0), TMR_WAIT },
-    { UDATA(&timer2_svc, 0, 0), TMR_WAIT },
+    { UDATA(NULL, 0, 0), TMR_WAIT },
     { NULL }
 };
 
@@ -402,10 +402,30 @@ DEVICE timer_dev = {
 };
 
 #define TIMER_STP_US  10           /* 10 us delay per timer step */
+#define SYSTEM_CLK    1            /* Clock output 1 is the system clock */
 
-#define tmrnum   u3
-#define tmr      up7
+#define tmrnum        u3
+#define tmr           up7
 #define TIMER_START_TIME (sim_gtime() + (DELAY_US(3 * TIMER_STP_US)))
+
+t_stat start_system_clock() {
+    int32 ticks, t;
+    struct timer_ctr *ctr;
+    UNIT *uptr;
+
+    ctr = &TIMERS[SYSTEM_CLK];
+    uptr = &timer_unit[SYSTEM_CLK];
+
+    ticks = ctr->divider / TIMER_STP_US;
+
+    if (ticks > 0) {
+        if (sim_is_active(uptr)) {
+            sim_cancel(uptr);
+        }
+        t = sim_rtcn_calb(ticks, CLK_TMR);
+        sim_activate_after_abs(uptr, 1000000 / ticks);
+    }
+}
 
 int32 timer_decr(struct timer_ctr *ctr)
 {
@@ -442,25 +462,6 @@ t_stat timer_reset(DEVICE *dptr) {
     return SCPE_OK;
 }
 
-t_stat timer0_svc(UNIT *uptr)
-{
-    struct timer_ctr *ctr;
-    int32 time;
-
-    ctr = (struct timer_ctr *)uptr->tmr;
-
-    time = ctr->divider * TIMER_STP_US;
-
-    if (time == 0) {
-        time = TIMER_STP_US;
-    }
-
-    sim_activate_abs(uptr, DELAY_US(time));
-    ctr->stime = TIMER_START_TIME;
-
-    return SCPE_OK;
-}
-
 t_stat timer1_svc(UNIT *uptr)
 {
     struct timer_ctr *ctr;
@@ -479,25 +480,6 @@ t_stat timer1_svc(UNIT *uptr)
         sim_activate_after(uptr, 1000000 / ticks);
         ctr->stime = TIMER_START_TIME;
     }
-
-    return SCPE_OK;
-}
-
-t_stat timer2_svc(UNIT *uptr)
-{
-    struct timer_ctr *ctr;
-    int32 time;
-
-    ctr = (struct timer_ctr *)uptr->tmr;
-
-    time = ctr->divider * TIMER_STP_US;
-
-    if (time == 0) {
-        time = TIMER_STP_US;
-    }
-
-    sim_activate_abs(uptr, DELAY_US(time));
-    ctr->stime = TIMER_START_TIME;
 
     return SCPE_OK;
 }
@@ -575,8 +557,10 @@ uint32 timer_read(uint32 pa, size_t size)
 
 void handle_timer_write(uint8 ctrnum, uint32 val)
 {
-    int32 time;
+    int32 t, ticks;
     struct timer_ctr *ctr;
+
+    UNIT *uptr = &timer_unit[1];
 
     ctr = &TIMERS[ctrnum];
     switch(ctr->mode & 0x30) {
@@ -585,34 +569,22 @@ void handle_timer_write(uint8 ctrnum, uint32 val)
         ctr->divider |= val & 0xff;
         ctr->enabled = TRUE;
         ctr->stime = TIMER_START_TIME;
-        time = DELAY_US(ctr->divider * TIMER_STP_US);
-        sim_activate_abs(&timer_unit[ctrnum], time);
-        sim_debug(EXECUTE_MSG, &timer_dev,
-                  "[Lower] [divider=%04x] Setting timer %d to fire in %d steps.\n",
-                  ctr->divider, ctrnum, time);
+        start_system_clock();
         break;
     case 0x20:
         ctr->divider &= 0x00ff;
         ctr->divider |= (val & 0xff) << 8;
         ctr->enabled = TRUE;
         ctr->stime = TIMER_START_TIME;
-        time = DELAY_US(ctr->divider * TIMER_STP_US);
-        sim_activate_abs(&timer_unit[ctrnum], time);
-        sim_debug(EXECUTE_MSG, &timer_dev,
-                  "[Upper] [divider=%04x] Setting timer %d to fire in %d steps.\n",
-                  ctr->divider, ctrnum, time);
+        start_system_clock();
         break;
     case 0x30:
         if (ctr->lmb) {
             ctr->lmb = FALSE;
             ctr->divider = (ctr->divider & 0x00ff) | ((val & 0xff) << 8);
-            ctr->stime = TIMER_START_TIME;
-            time = DELAY_US(ctr->divider * TIMER_STP_US);
-            sim_activate_abs(&timer_unit[ctrnum], time);
-            sim_debug(EXECUTE_MSG, &timer_dev,
-                      "[Lower/Upper] [divider=%04x] Setting timer %d to fire in %d steps.\n",
-                      ctr->divider, ctrnum, time);
             ctr->enabled = TRUE;
+            ctr->stime = TIMER_START_TIME;
+            start_system_clock();
         } else {
             ctr->lmb = TRUE;
             ctr->divider = (ctr->divider & 0xff00) | (val & 0xff);
