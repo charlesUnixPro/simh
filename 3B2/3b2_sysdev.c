@@ -285,7 +285,7 @@ t_stat nvram_attach(UNIT *uptr, CONST char *cptr)
 
     if (r != SCPE_OK) {
         /* Unset the ATTABLE and BUFABLE flags if we failed. */
-        uptr->flags = uptr->flags & ~(UNIT_ATTABLE | UNIT_BUFABLE);
+        uptr->flags = uptr->flags & (uint32) ~(UNIT_ATTABLE | UNIT_BUFABLE);
     } else {
         uptr->hwmark = (uint32) uptr->capac;
     }
@@ -300,7 +300,7 @@ t_stat nvram_detach(UNIT *uptr)
     r = detach_unit(uptr);
 
     if ((uptr->flags & UNIT_ATT) == 0) {
-        uptr->flags = uptr->flags & ~(UNIT_ATTABLE | UNIT_BUFABLE);
+        uptr->flags = uptr->flags & (uint32) ~(UNIT_ATTABLE | UNIT_BUFABLE);
     }
 
     return r;
@@ -341,7 +341,7 @@ void nvram_write(uint32 pa, uint32 val, size_t size)
     switch(size) {
     case 8:
         sc = (~(pa & 3) << 3) & 0x1f;
-        mask = 0xff << sc;
+        mask = (uint32) (0xff << sc);
         NVRAM[index] = (NVRAM[index] & ~mask) | (val << sc);
         break;
     case 16:
@@ -410,7 +410,6 @@ DEVICE timer_dev = {
 int32 timer_decr(struct timer_ctr *ctr)
 {
     double diff;
-    int32 decr;
 
     diff = sim_gtime() - ctr->stime;
 
@@ -455,7 +454,7 @@ t_stat timer0_svc(UNIT *uptr)
         time = TIMER_STP_US;
     }
 
-    sim_activate_abs(uptr, DELAY_US(time));
+    sim_activate_abs(uptr, (int32) DELAY_US(time));
     ctr->stime = TIMER_START_TIME;
 
     return SCPE_OK;
@@ -478,7 +477,7 @@ t_stat timer1_svc(UNIT *uptr)
     if (ticks == 0) {
         ticks = TPS_CLK;
     }
-    sim_activate_after(uptr, 1000000 / ticks);
+    sim_activate_after(uptr, (uint32) (1000000 / ticks));
     ctr->stime = TIMER_START_TIME;
 
     return SCPE_OK;
@@ -497,7 +496,7 @@ t_stat timer2_svc(UNIT *uptr)
         time = TIMER_STP_US;
     }
 
-    sim_activate_abs(uptr, DELAY_US(time));
+    sim_activate_abs(uptr, (int32) DELAY_US(time));
     ctr->stime = TIMER_START_TIME;
 
     return SCPE_OK;
@@ -582,7 +581,7 @@ void handle_timer_write(uint8 ctrnum, uint32 val)
     case 0x30:
         if (ctr->lmb) {
             ctr->lmb = FALSE;
-            ctr->divider = (ctr->divider & 0x00ff) | ((val & 0xff) << 8);
+            ctr->divider = (uint16) ((ctr->divider & 0x00ff) | ((val & 0xff) << 8));
             ctr->enabled = TRUE;
             ctr->stime = TIMER_START_TIME;
         } else {
@@ -599,10 +598,9 @@ void handle_timer_write(uint8 ctrnum, uint32 val)
 void timer_write(uint32 pa, uint32 val, size_t size)
 {
     uint8 reg, ctrnum;
-    int32 time;
     struct timer_ctr *ctr;
 
-    reg = pa - TIMERBASE;
+    reg = (uint8) (pa - TIMERBASE);
 
     switch(reg) {
     case TIMER_REG_DIVA:
@@ -632,7 +630,7 @@ void timer_write(uint32 pa, uint32 val, size_t size)
             return;
         }
         ctr = &TIMERS[ctrnum];
-        ctr->mode = val;
+        ctr->mode = (uint8) val;
         ctr->enabled = FALSE;
         ctr->lmb = FALSE;
         break;

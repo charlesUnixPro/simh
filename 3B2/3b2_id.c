@@ -55,6 +55,7 @@
  *
  */
 
+#include <assert.h>
 #include "3b2_id.h"
 
 /* Wait times, in CPU steps, for various actions */
@@ -181,13 +182,11 @@ DEVICE id_dev = {
 static SIM_INLINE void id_activate(uint32 delay)
 {
     ID_START_TIME();
-    sim_activate_abs(id_sel_unit, delay);
+    sim_activate_abs(id_sel_unit, (int32) delay);
 }
 
 static SIM_INLINE void id_clear_fifo()
 {
-    uint8 i;
-
     id_dpr = 0;
     id_dpw = 0;
 }
@@ -205,9 +204,9 @@ t_stat id_svc(UNIT *uptr)
             id_status |= ID_STAT_SRQ;
         }
         if (uptr->flags & UNIT_ATT) {
-            id_int_status = ID_IST_SEN|uptr->ID_UNIT_NUM;
+            id_int_status = ID_IST_SEN|(uint8)uptr->ID_UNIT_NUM;
         } else {
-            id_int_status = ID_IST_NR|uptr->ID_UNIT_NUM;
+            id_int_status = ID_IST_NR|(uint8)uptr->ID_UNIT_NUM;
         }
         break;
     case ID_CMD_SIS:
@@ -314,12 +313,12 @@ static void SIM_INLINE id_update_chs() {
 
 uint32 id_read(uint32 pa, size_t size) {
     uint8 reg;
-    uint32 cyl;
+    uint16 cyl;
     t_lba lba;
     uint32 data;
     t_seccnt sectsread;
 
-    reg = pa - IDBASE;
+    reg = (uint8) (pa - IDBASE);
 
     switch(reg) {
     case ID_DATA_REG:     /* Data Buffer Register */
@@ -354,7 +353,7 @@ uint32 id_read(uint32 pa, size_t size) {
                 if (id_buf_ptr == 0 || id_buf_ptr >= ID_SEC_SIZE) {
                     /* It's time to read a new sector into our sector buf */
                     id_buf_ptr = 0;
-                    cyl = (id_lcnh << 8)|id_lcnl;
+                    cyl = (uint16) (((uint16)id_lcnh << 8)|(uint16)id_lcnl);
                     id_cyl[UNIT_NUM] = cyl;
                     lba = id_lba(cyl, id_lhn, id_lsn);
                     if (sim_disk_rdsect(id_sel_unit, lba, id_buf, &sectsread, 1) == SCPE_OK) {
@@ -418,6 +417,8 @@ uint32 id_read(uint32 pa, size_t size) {
                         id_data[1] = id_scnt;
                     }
                 }
+            } else {
+                assert(0); // cmd not Read Data or Read ID
             }
 
             return data;
@@ -453,11 +454,11 @@ uint32 id_read(uint32 pa, size_t size) {
 void id_write(uint32 pa, uint32 val, size_t size)
 {
     uint8 reg;
-    uint32 cyl;
+    uint16 cyl;
     t_lba lba;
     t_seccnt sectswritten;
 
-    reg = pa - IDBASE;
+    reg = (uint8) (pa - IDBASE);
 
     switch(reg) {
     case ID_DATA_REG:
@@ -493,7 +494,7 @@ void id_write(uint32 pa, uint32 val, size_t size)
             if (id_buf_ptr >= ID_SEC_SIZE) {
                 /* It's time to start the next sector, and flush the old. */
                 id_buf_ptr = 0;
-                cyl = (id_lcnh << 8)|id_lcnl;
+                cyl = (uint16) (((uint16) id_lcnh << 8)|(uint16)id_lcnl);
                 id_cyl[UNIT_NUM] = cyl;
                 lba = id_lba(cyl, id_lhn, id_lsn);
                 if (sim_disk_wrsect(id_sel_unit, lba, id_buf, &sectswritten, 1) == SCPE_OK) {
@@ -528,7 +529,7 @@ void id_write(uint32 pa, uint32 val, size_t size)
                       R[NUM_PC], val);
 
             if (id_dpw < ID_FIFO_LEN) {
-                id_data[id_dpw++] = val;
+                id_data[id_dpw++] = (uint8) val;
             } else {
                 sim_debug(WRITE_MSG, &id_dev,
                           "[%08x] ERROR\tFIFO OVERRUN\n",
@@ -537,7 +538,7 @@ void id_write(uint32 pa, uint32 val, size_t size)
         }
         return;
     case ID_CMD_STAT_REG:
-        id_handle_command(val);
+        id_handle_command((uint8) val);
         return;
     default:
         return;
@@ -664,7 +665,7 @@ void id_handle_command(uint8 val)
         id_lcnh = id_data[0];
         id_lcnl = id_data[1];
         cyl = id_lcnh << 8 | id_lcnl;
-        time = abs(id_cyl[UNIT_NUM] - cyl);
+        time = (uint32) abs(id_cyl[UNIT_NUM] - cyl);
         id_activate(DELAY_US(ID_SEEK_BASE + (ID_SEEK_WAIT * time)));
         id_cyl[UNIT_NUM] = cyl;
         id_seek_sis = TRUE;
@@ -767,7 +768,7 @@ void id_handle_command(uint8 val)
                       R[NUM_PC], UNIT_NUM);
         }
 
-        time = abs(id_cyl[UNIT_NUM] - ((id_lcnh<<8)|id_lcnl));
+        time = (uint32) abs(id_cyl[UNIT_NUM] - ((id_lcnh<<8)|id_lcnl));
         if (time == 0) {
             time++;
         }
@@ -812,7 +813,7 @@ void id_handle_command(uint8 val)
                       "[%08x]\tUNIT %d NOT ATTACHED, CANNOT WRITE.\n",
                       R[NUM_PC], UNIT_NUM);
         }
-        time = abs(id_cyl[UNIT_NUM] - ((id_lcnh<<8)|id_lcnl));
+        time = (uint32) abs(id_cyl[UNIT_NUM] - ((id_lcnh<<8)|id_lcnl));
         if (time == 0) {
             time++;
         }

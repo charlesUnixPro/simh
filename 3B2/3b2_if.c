@@ -101,7 +101,7 @@ static SIM_INLINE void if_clear_irq()
 static SIM_INLINE void if_activate(uint32 delay)
 {
     IF_START_TIME();
-    sim_activate_abs(&if_unit, DELAY_MS(delay));
+    sim_activate_abs(&if_unit, (int32) DELAY_MS(delay));
 }
 
 static SIM_INLINE void if_cancel_pending_irq()
@@ -223,6 +223,7 @@ uint32 if_read(uint32 pa, size_t size) {
 
         break;
     default:
+        data = 0xffu; // Compiler warning
         break;
     }
 
@@ -318,20 +319,20 @@ void if_handle_command()
     case IF_STEP_T:
         sim_debug(EXECUTE_MSG, &if_dev, "\tCOMMAND\t%02x\tStep\n", if_state.cmd);
         if_activate(IF_STEP_DELAY);
-        if_state.track = min(max(if_state.track + if_state.step_dir, 0), 0x4f);
+        if_state.track = (uint8) min(max((int) if_state.track + if_state.step_dir, 0), 0x4f);
         break;
     case IF_STEP_IN:
     case IF_STEP_IN_T:
         sim_debug(EXECUTE_MSG, &if_dev, "\tCOMMAND\t%02x\tStep In\n", if_state.cmd);
         if_state.step_dir = IF_STEP_IN_DIR;
-        if_state.track = max(if_state.track + if_state.step_dir, 0);
+        if_state.track = (uint8) max((int) if_state.track + if_state.step_dir, 0);
         if_activate(IF_STEP_DELAY);
         break;
     case IF_STEP_OUT:
     case IF_STEP_OUT_T:
         sim_debug(EXECUTE_MSG, &if_dev, "\tCOMMAND\t%02x\tStep Out\n", if_state.cmd);
         if_state.step_dir = IF_STEP_OUT_DIR;
-        if_state.track = min(if_state.track + if_state.step_dir, 0x4f);
+        if_state.track = (uint8) min((int) if_state.track + if_state.step_dir, 0x4f);
         if_activate(IF_STEP_DELAY);
         break;
     case IF_SEEK:
@@ -364,7 +365,7 @@ void if_handle_command()
             if_state.status &= ~(IF_TK_0);
         }
 
-        delay_ms = abs(if_state.data - if_state.track);
+        delay_ms = (uint32) abs(if_state.data - if_state.track);
 
         if (delay_ms == 0) {
             delay_ms++;
@@ -453,26 +454,26 @@ void if_write(uint32 pa, uint32 val, size_t size)
     val = val & 0xff;
 
     uptr = &(if_dev.units[0]);
-    reg = pa - IFBASE;
+    reg = (uint8) (pa - IFBASE);
     fbuf = (uint8 *)uptr->filebuf;
 
     switch (reg) {
     case IF_CMD_REG:
-        if_state.cmd = val;
+        if_state.cmd = (uint8) val;
         /* Writing to the command register always de-asserts the IRQ line */
         if_clear_irq();
         if_handle_command();
         break;
     case IF_TRACK_REG:
-        if_state.track = val;
+        if_state.track = (uint8) val;
         sim_debug(WRITE_MSG, &if_dev, "\tTRACK\t%02x\n", val);
         break;
     case IF_SECTOR_REG:
-        if_state.sector = val;
+        if_state.sector = (uint8) val;
         sim_debug(WRITE_MSG, &if_dev, "\tSECTOR\t%02x\n", val);
         break;
     case IF_DATA_REG:
-        if_state.data = val;
+        if_state.data = (uint8) val;
 
         sim_debug(WRITE_MSG, &if_dev, "\tDATA\t%02x\n", val);
 
@@ -485,7 +486,7 @@ void if_write(uint32 pa, uint32 val, size_t size)
 
         /* Find the right offset, and update the value. */
         pos = if_buf_offset();
-        fbuf[pos + if_sec_ptr++] = val;
+        fbuf[pos + if_sec_ptr++] = (uint8) val;
 
         if (if_sec_ptr >= IF_SECTOR_SIZE) {
             if_sec_ptr = 0;

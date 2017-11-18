@@ -65,7 +65,7 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define HW_MSB     0x8000
 #define BT_MSB     0x80
 #define WORD_MASK  0xffffffff
-#define HALF_MASK  0xffff
+#define HALF_MASK  0xffffu
 #define BYTE_MASK  0xff
 
 /*
@@ -187,8 +187,8 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define PRIVILEGED_REGISTER  15
 
 #define PSW_ET                0
-#define PSW_TM                2
-#define PSW_ISC               3
+#define PSW_TM                2u
+#define PSW_ISC               3u
 #define PSW_I                 7
 #define PSW_R                 8
 #define PSW_PM                9
