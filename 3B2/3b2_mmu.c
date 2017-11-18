@@ -727,16 +727,19 @@ t_stat mmu_decode_va(uint32 va, uint8 r_acc, t_bool fc, uint32 *pa)
         /* Partial miss processing - SDC miss and PDC hit. This is
          * always paged translation */
 
-        /* If the 'L' bit is set in the page descriptor, we need to
-         * bring in the SD and do some bounds checking */
-        if (PD_LAST(pd)) {
-            if (mmu_get_sd(va, r_acc, fc, &sd0, &sd1) != SCPE_OK) {
-                sim_debug(EXECUTE_MSG, &mmu_dev,
-                          "[%08x] Could not get SD (partial miss). r_acc=%d, fc=%d, va=%08x\n",
-                          R[NUM_PC], r_acc, fc, va);
-                return SCPE_NXM;
-            }
+        /* First we must bring the SD into cache so that the SD
+         * R & M bits may be updated, if needed. */
 
+        if (mmu_get_sd(va, r_acc, fc, &sd0, &sd1) != SCPE_OK) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] Could not get SD (partial miss). r_acc=%d, fc=%d, va=%08x\n",
+                      R[NUM_PC], r_acc, fc, va);
+            return SCPE_NXM;
+        }
+
+        /* If the 'L' bit is set in the page descriptor, we need to
+         * do some bounds checking */
+        if (PD_LAST(pd)) {
             if ((PD_ADDR(pd) + POT(va)) > (SD_SEG_ADDR(sd1) + MAX_OFFSET(sd0))) {
                 sim_debug(EXECUTE_MSG, &mmu_dev,
                           "[%08x] PAGED: Segment Offset Fault.\n",
