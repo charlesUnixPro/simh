@@ -134,7 +134,7 @@ uint8    id_lhn = 0;
 /* Logical sector number */
 uint8    id_lsn = 0;
 /* Number of sectors to transfer, decremented after each sector */
-int16    id_scnt = 0;
+int8     id_scnt = 0;
 /* Sector buffer */
 uint8    id_buf[ID_SEC_SIZE];
 /* Buffer pointer */
@@ -281,7 +281,7 @@ static void SIM_INLINE id_end_rw(uint8 est) {
     id_data[3] = id_lcnl;
     id_data[4] = id_lhn;
     id_data[5] = id_lsn;
-    id_data[6] = (uint8) id_scnt;
+    id_data[6] = id_scnt;
 }
 
 /* The controller wraps id_lsn, id_lhn, and id_lcnl on each sector
@@ -414,7 +414,7 @@ uint32 id_read(uint32 pa, size_t size) {
                         id_dpr = 0;
                         id_dpw = 0;
                         id_data[0] = 0;
-                        id_data[1] = (uint8) id_scnt;
+                        id_data[1] = id_scnt;
                     }
                 }
             } else {
@@ -707,7 +707,7 @@ void id_handle_command(uint8 val)
             id_data[0] = ID_EST_NR;
         }
 
-        id_data[1] = (uint8) id_scnt;
+        id_data[1] = id_scnt;
 
         id_activate(DELAY_US(ID_CMD_WAIT));
         break;
