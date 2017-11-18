@@ -378,7 +378,7 @@ struct timer_ctr TIMERS[3];
 
 UNIT timer_unit[] = {
     { UDATA(&timer0_svc, 0, 0), TMR_WAIT },
-    { UDATA(&timer1_svc, 0, 0), TMR_WAIT },
+    { UDATA(&timer1_svc, UNIT_IDLE, 0), TMR_WAIT },
     { UDATA(&timer2_svc, 0, 0), TMR_WAIT },
     { NULL }
 };

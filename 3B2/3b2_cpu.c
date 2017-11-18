@@ -133,7 +133,7 @@ static DEBTAB cpu_deb_tab[] = {
     { NULL,         0                                       }
 };
 
-UNIT cpu_unit = { UDATA (NULL, UNIT_FIX|UNIT_BINK, MAXMEMSIZE) };
+UNIT cpu_unit = { UDATA (NULL, UNIT_FIX|UNIT_BINK|UNIT_IDLE, MAXMEMSIZE) };
 
 #define UNIT_V_EXHALT   (UNIT_V_UF + 0)                 /* halt to console */
 #define UNIT_EXHALT     (1u << UNIT_V_EXHALT)
@@ -147,6 +147,8 @@ MTAB cpu_mod[] = {
       &cpu_set_size, NULL, NULL, "Set Memory to 4M bytes" },
     { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "HISTORY", "HISTORY",
       &cpu_set_hist, &cpu_show_hist, NULL, "Displays instruction history" },
+    { MTAB_XTD|MTAB_VDV, 0, "IDLE", "IDLE", &sim_set_idle, &sim_show_idle },
+    { MTAB_XTD|MTAB_VDV, 0, NULL, "NOIDLE", &sim_clr_idle, NULL },
     { UNIT_EXHALT, UNIT_EXHALT, "Halt on Exception", "EX_HALT",
       NULL, NULL, NULL, "Enables Halt on exceptions and traps" },
     { UNIT_EXHALT, 0, "No halt on exception", "NOEX_HALT",
@@ -629,7 +631,7 @@ t_stat cpu_reset(DEVICE *dptr)
     cpu_nmi = FALSE;
 
     cpu_hist_p = 0;
-    cpu_in_wait = 0;
+    cpu_in_wait = FALSE;
 
     sim_brk_types = SWMASK('E');
     sim_brk_dflt = SWMASK('E');
@@ -1478,6 +1480,9 @@ t_stat sim_instr(void)
         }
 
         if (cpu_in_wait) {
+            if (sim_idle_enab) {
+                sim_idle(CLK_TMR, TRUE);
+            }
             continue;
         }
 
