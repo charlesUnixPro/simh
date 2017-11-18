@@ -3128,7 +3128,7 @@ static SIM_INLINE int8 op_type(operand *op) {
 }
 
 static SIM_INLINE t_bool op_signed(operand *op) {
-    return (op_type(op) == WD || op_type(op) == HW || op_type(op) == BS);
+    return (op_type(op) == WD || op_type(op) == HW || op_type(op) == SB);
 }
 
 static SIM_INLINE t_bool is_byte_immediate(operand * oper)
