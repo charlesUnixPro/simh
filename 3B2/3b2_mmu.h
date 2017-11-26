@@ -313,12 +313,12 @@ typedef struct _mmu_state {
 
 } MMU_STATE;
 
-MMU_STATE mmu_state;
+extern MMU_STATE mmu_state;
 
 extern volatile int32 stop_reason;
 extern DEVICE mmu_dev;
 
-t_stat mmu_init();
+t_stat mmu_init(DEVICE *dptr);
 uint32 mmu_read(uint32 pa, size_t size);
 void mmu_write(uint32 pa, uint32 val, size_t size);
 

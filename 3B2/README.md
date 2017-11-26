@@ -3,8 +3,8 @@ AT&T 3B2 Simulator
 
 This module contains a simulator for the AT&T 3B2 Model 400 microcomputer.
 
-*CAUTION*: The simulator is under active and heavy development, and is not
-yet of usable quality! Consider this emulator to be an alpha!
+*CAUTION*: The simulator is under active and heavy development. It is
+usable today, but please consider this emulator to be a beta.
 
 Devices
 -------
@@ -87,3 +87,26 @@ carriage return.
            0          0     FD5
 
     Enter Load Device Option Number [0 (FD5)]:
+
+Installing SVR3
+---------------
+
+To install SVR3 to the first hard disk, first, attach a new image
+
+    sim> ATTACH ID0 <disk-image>
+
+Then, boot the file `idtools` from the "3B2 Maintenance Utilities -
+Issue 4.0" floppy diskette.
+
+From `idtools`, select the `formhard` option and low-level format
+integrated disk 0. Parameters are:
+
+                   Drive Id: 5
+           Number cylinders: 925
+          Number tracks/cyl: 9
+       Number sectors/track: 18
+        Number bytes/sector: 512
+
+After low-level formatting integrated disk 0, boot the file `unix`
+from the first diskette of the 3B2 "Essential Utilities" distribution,
+and follow the prompts.

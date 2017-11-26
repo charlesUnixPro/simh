@@ -51,6 +51,8 @@ DEBTAB sys_deb_tab[] = {
     { NULL,         0                                   }
 };
 
+struct timer_ctr TIMERS[3];
+
 uint32 *NVRAM = NULL;
 
 extern DEVICE cpu_dev;
@@ -151,8 +153,7 @@ void csr_write(uint32 pa, uint32 val, size_t size)
         csr_data &= ~CSRPARE;
         break;
     case 0x0b:    /* Set System Reset Request */
-        iu_reset(&iu_dev);
-        cpu_reset(&cpu_dev);
+        full_reset();
         cpu_boot(0, &cpu_dev);
         break;
     case 0x0f:    /* Clear Memory Alignment Fault */
@@ -171,9 +172,32 @@ void csr_write(uint32 pa, uint32 val, size_t size)
         csr_data &= ~CSRFLOP;
         break;
     case 0x23:    /* Set Inhibit Timers */
+        sim_debug(WRITE_MSG, &csr_dev,
+                  "[%08x] SET INHIBIT TIMERS\n", R[NUM_PC]);
         csr_data |= CSRITIM;
         break;
     case 0x27:    /* Clear Inhibit Timers */
+        sim_debug(WRITE_MSG, &csr_dev,
+                  "[%08x] CLEAR INHIBIT TIMERS\n", R[NUM_PC]);
+
+        /* A side effect of clearing the timer inhibit bit is to cause
+         * a simulated "tick" of any active timers.  This is a hack to
+         * make diagnostics pass. This is not 100% accurate, but it
+         * makes SVR3 and DGMON tests happy.
+         */
+
+        if (TIMERS[0].gate && TIMERS[0].enabled) {
+            TIMERS[0].val = TIMERS[0].divider - 1;
+        }
+
+        if (TIMERS[1].gate && TIMERS[1].enabled) {
+            TIMERS[1].val = TIMERS[1].divider - 1;
+        }
+
+        if (TIMERS[2].gate && TIMERS[2].enabled) {
+            TIMERS[2].val = TIMERS[2].divider - 1;
+        }
+
         csr_data &= ~CSRITIM;
         break;
     case 0x2b:    /* Set Inhibit Faults */
@@ -310,7 +334,7 @@ t_stat nvram_detach(UNIT *uptr)
 uint32 nvram_read(uint32 pa, size_t size)
 {
     uint32 offset = pa - NVRAMBASE;
-    uint32 data;
+    uint32 data = 0;
     uint32 sc = (~(offset & 3) << 3) & 0x1f;
 
     switch(size) {
@@ -368,8 +392,6 @@ void nvram_write(uint32 pa, uint32 val, size_t size)
  *
  */
 
-struct timer_ctr TIMERS[3];
-
 /*
  * The three timers, (A, B, C) run at different
  * programmatially controlled frequencies, so each must be
@@ -382,6 +404,8 @@ UNIT timer_unit[] = {
     { UDATA(&timer2_svc, 0, 0) },
     { NULL }
 };
+
+UNIT *timer_clk_unit = &timer_unit[1];
 
 REG timer_reg[] = {
     { HRDATAD(DIVA,  TIMERS[0].divider, 16, "Divider A") },
@@ -401,24 +425,11 @@ DEVICE timer_dev = {
     DEV_DEBUG, 0, sys_deb_tab
 };
 
-#define TIMER_STP_US  10           /* 10 us delay per timer step */
+#define TIMER_STP_US      10       /* 10 us delay per timer step */
 
-#define tmrnum   u3
-#define tmr      up7
-#define TIMER_START_TIME (sim_gtime() + (DELAY_US(3 * TIMER_STP_US)))
+#define tmrnum            u3
+#define tmr               up7
 
-int32 timer_decr(struct timer_ctr *ctr)
-{
-    double diff;
-
-    diff = sim_gtime() - ctr->stime;
-
-    if (diff < 0) {
-        return 0;
-    }
-
-    return (int32)(diff / DELAY_US(TIMER_STP_US));
-}
 
 t_stat timer_reset(DEVICE *dptr) {
     int32 i, t;
@@ -434,8 +445,8 @@ t_stat timer_reset(DEVICE *dptr) {
     TIMERS[1].gate = 1;
 
     if (!sim_is_running) {
-        t = sim_rtcn_init_unit(&timer_unit[1], TPS_CLK, TMR_CLK);
-        sim_activate_after(&timer_unit[1], 1000000 / t);
+        t = sim_rtcn_init_unit(timer_clk_unit, TPS_CLK, TMR_CLK);
+        sim_activate_after(timer_clk_unit, 1000000 / t);
     }
 
     return SCPE_OK;
@@ -455,7 +466,6 @@ t_stat timer0_svc(UNIT *uptr)
     }
 
     sim_activate_abs(uptr, (int32) DELAY_US(time));
-    ctr->stime = TIMER_START_TIME;
 
     return SCPE_OK;
 }
@@ -467,18 +477,19 @@ t_stat timer1_svc(UNIT *uptr)
 
     ctr = (struct timer_ctr *)uptr->tmr;
 
-    if (ctr->enabled && ctr->gate) {
+    if (ctr->enabled && !(csr_data & CSRITIM)) {
         /* Fire the IPL 15 clock interrupt */
         csr_data |= CSRCLK;
     }
 
     ticks = ctr->divider / TIMER_STP_US;
-    t = sim_rtcn_calb(ticks, TMR_CLK);
-    if (ticks == 0) {
+
+    if (ticks < CLK_MIN_TICKS) {
         ticks = TPS_CLK;
     }
+
+    t = sim_rtcn_calb(ticks, TMR_CLK);
     sim_activate_after(uptr, (uint32) (1000000 / ticks));
-    ctr->stime = TIMER_START_TIME;
 
     return SCPE_OK;
 }
@@ -497,7 +508,6 @@ t_stat timer2_svc(UNIT *uptr)
     }
 
     sim_activate_abs(uptr, (int32) DELAY_US(time));
-    ctr->stime = TIMER_START_TIME;
 
     return SCPE_OK;
 }
@@ -505,7 +515,7 @@ t_stat timer2_svc(UNIT *uptr)
 uint32 timer_read(uint32 pa, size_t size)
 {
     uint32 reg;
-    int32 ctr_val, decr;
+    uint16 ctr_val;
     uint8 ctrnum;
     struct timer_ctr *ctr;
 
@@ -517,15 +527,12 @@ uint32 timer_read(uint32 pa, size_t size)
     case TIMER_REG_DIVA:
     case TIMER_REG_DIVB:
     case TIMER_REG_DIVC:
-        /* TODO: Fix this hacky mess */
-        if (ctr->gate && ctr->enabled) {
-            decr = timer_decr(ctr);
-            ctr_val = ctr->divider - decr;
-            if (ctr_val < 0) {
-                ctr_val = 0;
-            }
-        } else {
-            ctr_val = ctr->divider;
+        ctr_val = ctr->val;
+
+        if (ctr_val != ctr->divider) {
+            sim_debug(READ_MSG, &timer_dev,
+                      "[%08x] >>> ctr_val = %04x, ctr->divider = %04x\n",
+                      R[NUM_PC], ctr_val, ctr->divider);
         }
 
         switch (ctr->mode & CLK_RW) {
@@ -548,6 +555,8 @@ uint32 timer_read(uint32 pa, size_t size)
     case TIMER_REG_CTRL:
         return ctr->mode;
     case TIMER_CLR_LATCH:
+        /* Clearing the timer latch has a side-effect
+           of also clearing pending interrupts */
         csr_data &= ~CSRCLK;
         return 0;
     default:
@@ -561,7 +570,6 @@ uint32 timer_read(uint32 pa, size_t size)
 
 void handle_timer_write(uint8 ctrnum, uint32 val)
 {
-    int32 time;
     struct timer_ctr *ctr;
 
     ctr = &TIMERS[ctrnum];
@@ -569,24 +577,39 @@ void handle_timer_write(uint8 ctrnum, uint32 val)
     case 0x10:
         ctr->divider &= 0xff00;
         ctr->divider |= val & 0xff;
+        ctr->val = ctr->divider;
         ctr->enabled = TRUE;
-        ctr->stime = TIMER_START_TIME;
+        ctr->stime = sim_gtime();
+        sim_cancel(timer_clk_unit);
+        sim_activate_abs(timer_clk_unit, ctr->divider * TIMER_STP_US);
         break;
     case 0x20:
         ctr->divider &= 0x00ff;
         ctr->divider |= (val & 0xff) << 8;
+        ctr->val = ctr->divider;
         ctr->enabled = TRUE;
-        ctr->stime = TIMER_START_TIME;
+        ctr->stime = sim_gtime();
+        /* Kick the timer to get the new divider value */
+        sim_cancel(timer_clk_unit);
+        sim_activate_abs(timer_clk_unit, ctr->divider * TIMER_STP_US);
         break;
     case 0x30:
         if (ctr->lmb) {
             ctr->lmb = FALSE;
             ctr->divider = (uint16) ((ctr->divider & 0x00ff) | ((val & 0xff) << 8));
+            ctr->val = ctr->divider;
             ctr->enabled = TRUE;
-            ctr->stime = TIMER_START_TIME;
+            ctr->stime = sim_gtime();
+            sim_debug(READ_MSG, &timer_dev,
+                      "[%08x] Write timer %d val LMB (MSB): %02x\n",
+                      R[NUM_PC], ctrnum, val & 0xff);
+            /* Kick the timer to get the new divider value */
+            sim_cancel(timer_clk_unit);
+            sim_activate_abs(timer_clk_unit, ctr->divider * TIMER_STP_US);
         } else {
             ctr->lmb = TRUE;
             ctr->divider = (ctr->divider & 0xff00) | (val & 0xff);
+            ctr->val = ctr->divider;
         }
         break;
     default:
@@ -604,23 +627,15 @@ void timer_write(uint32 pa, uint32 val, size_t size)
 
     switch(reg) {
     case TIMER_REG_DIVA:
-        sim_debug(WRITE_MSG, &timer_dev,
-                  "[%08x] [TIMER_REG_DIVA] write\n", R[NUM_PC]);
         handle_timer_write(0, val);
         break;
     case TIMER_REG_DIVB:
-        sim_debug(WRITE_MSG, &timer_dev,
-                  "[%08x] [TIMER_REG_DIVB] write\n", R[NUM_PC]);
         handle_timer_write(1, val);
         break;
     case TIMER_REG_DIVC:
-        sim_debug(WRITE_MSG, &timer_dev,
-                  "[%08x] [TIMER_REG_DIVC] write\n", R[NUM_PC]);
         handle_timer_write(2, val);
         break;
     case TIMER_REG_CTRL:
-        sim_debug(WRITE_MSG, &timer_dev,
-                  "[%08x] [TIMER_REG_CTRL] write\n", R[NUM_PC]);
         /* The counter number is in bits 6 and 7 */
         ctrnum = (val >> 6) & 3;
         if (ctrnum > 2) {
@@ -636,7 +651,8 @@ void timer_write(uint32 pa, uint32 val, size_t size)
         break;
     case TIMER_CLR_LATCH:
         sim_debug(WRITE_MSG, &timer_dev,
-                  "[%08x] [TIMER_CLR_LATCH] unexpected write to timer latch\n", R[NUM_PC]);
+                  "[%08x] unexpected write to clear timer latch\n",
+                  R[NUM_PC]);
         break;
     }
 }
@@ -661,12 +677,9 @@ t_stat tod_reset(DEVICE *dptr)
 {
     int32 t;
 
-    /* December 1, 1988 (testing) */
-    tod_reg = 596966400;
-
     if (!sim_is_running) {
         t = sim_rtcn_init_unit(&tod_unit, TPS_TOD, TMR_TOD);
-        sim_activate_after(&tod_unit, 1000000 / TPS_TOD);
+        sim_activate_after(&tod_unit, 1000000 / t);
     }
 
     return SCPE_OK;
@@ -689,20 +702,26 @@ uint32 tod_read(uint32 pa, size_t size)
 
     reg = pa - TODBASE;
 
-    switch(reg) {
-    case 1:
-    case 3:
-    case 5:
-    case 7:
-    case 9:
-    case 12:
-    default:
-        break;
-    }
-
     sim_debug(READ_MSG, &tod_dev,
               "[%08x] READ TOD: reg=%02x\n",
               R[NUM_PC], reg);
+
+    switch(reg) {
+    case 0x04:        /* 1/10 Sec    */
+    case 0x08:        /* 1 Sec       */
+    case 0x0c:        /* 10 Sec      */
+    case 0x10:        /* 1 Min       */
+    case 0x14:        /* 10 Min      */
+    case 0x18:        /* 1 Hour      */
+    case 0x1c:        /* 10 Hour     */
+    case 0x20:        /* 1 Day       */
+    case 0x24:        /* 10 Day      */
+    case 0x28:        /* Day of Week */
+    case 0x2c:        /* 1 Month     */
+    case 0x30:        /* 10 Month    */
+    default:
+        break;
+    }
 
     return 0;
 }

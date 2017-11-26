@@ -45,13 +45,16 @@ uint32 *RAM = NULL;
 jmp_buf save_env;
 volatile uint32 abort_context;
 
-/* The last decoded instruction */
-instr cpu_instr;
+/* Pointer to the last decoded instruction */
+instr *cpu_instr;
+
+/* The instruction to use if there is no history storage */
+instr inst;
 
 /* Circular buffer of instructions */
-instr *INST;
-uint32 cpu_hist_size;
-uint32 cpu_hist_p;
+instr *INST = NULL;
+uint32 cpu_hist_size = 0;
+uint32 cpu_hist_p = 0;
 
 t_bool cpu_in_wait = FALSE;
 
@@ -612,17 +615,15 @@ t_stat cpu_reset(DEVICE *dptr)
         }
 
         if (RAM == NULL) {
-            RAM = (uint32 *) calloc(MEM_SIZE >> 2, sizeof(uint32));
+            RAM = (uint32 *) calloc((size_t)(MEM_SIZE >> 2), sizeof(uint32));
             if (RAM == NULL) {
                 return SCPE_MEM;
             }
 
-            memset(RAM, 0, MEM_SIZE >> 2);
+            memset(RAM, 0, (size_t)(MEM_SIZE >> 2));
 
             sim_vm_is_subroutine_call = cpu_is_pc_a_subroutine_call;
         }
-
-        cpu_hist_size = 0;
 
         cpu_load_rom();
     }
@@ -694,8 +695,10 @@ t_stat cpu_set_hist(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 
     if (cptr == NULL) {
         /* Disable the feature */
-        for (i = 0; i < cpu_hist_size; i++) {
-            INST[i].valid = FALSE;
+        if (INST != NULL) {
+            for (i = 0; i < cpu_hist_size; i++) {
+                INST[i].valid = FALSE;
+            }
         }
         cpu_hist_size = 0;
         cpu_hist_p = 0;
@@ -707,7 +710,9 @@ t_stat cpu_set_hist(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
     }
     cpu_hist_p = 0;
     if (size > 0) {
-        free(INST);
+        if (INST != NULL) {
+            free(INST);
+        }
         INST = (instr *)calloc(size, sizeof(instr));
         if (INST == NULL) {
             return SCPE_MEM;
@@ -745,7 +750,7 @@ void fprint_sym_m(FILE *st, instr *ip)
 
 t_stat cpu_show_hist(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
-    int32 i;
+    uint32 i;
     size_t j, count;
     char *cptr = (char *) desc;
     t_stat result;
@@ -955,7 +960,7 @@ t_stat cpu_set_size(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 
     MEM_SIZE = uval;
 
-    memset(RAM, 0, MEM_SIZE >> 2);
+    memset(RAM, 0, (size_t)(MEM_SIZE >> 2));
 
     return SCPE_OK;
 }
@@ -1009,6 +1014,7 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
     case 3:  /* Positive Literal */
     case 15: /* Negative literal */
         oper->embedded.b = (uint8)desc;
+        oper->data = oper->embedded.b;
         break;
     case 4:  /* Word Immediate, Register Mode */
         switch (oper->reg) {
@@ -1017,8 +1023,10 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
             oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 8u;
             oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 16u;
             oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 24u;
+            oper->data = oper->embedded.w;
             break;
         default: /* Register mode */
+            oper->data = R[oper->reg];
             break;
         }
         break;
@@ -1027,11 +1035,13 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
         case 15: /* Halfword Immediate */
             oper->embedded.h = (uint16) read_b(pa + offset++, ACC_OF);
             oper->embedded.h |= ((uint16) read_b(pa + offset++, ACC_OF)) << 8u;
+            oper->data = oper->embedded.h;
             break;
         case 11: /* INVALID */
             cpu_abort(NORMAL_EXCEPTION, INVALID_DESCRIPTOR);
             return offset;
         default: /* Register deferred mode */
+            oper->data = R[oper->reg];
             break;
         }
         break;
@@ -1039,9 +1049,11 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
         switch (oper->reg) {
         case 15: /* Byte Immediate */
             oper->embedded.b = read_b(pa + offset++, ACC_OF);
+            oper->data = oper->embedded.b;
             break;
         default: /* FP Short Offset */
             oper->embedded.b = oper->reg;
+            oper->data = oper->embedded.b;
             break;
         }
         break;
@@ -1052,9 +1064,11 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
             oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 8u;
             oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 16u;
             oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 24u;
+            oper->data = oper->embedded.w;
             break;
         default: /* AP Short Offset */
             oper->embedded.b = oper->reg;
+            oper->data = oper->embedded.b;
             break;
         }
         break;
@@ -1064,15 +1078,18 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
         oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 8u;
         oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 16u;
         oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 24u;
+        oper->data = oper->embedded.w;
         break;
     case 10: /* Halfword Displacement */
     case 11: /* Halfword Displacement Deferred */
         oper->embedded.h = read_b(pa + offset++, ACC_OF);
         oper->embedded.h |= ((uint16) read_b(pa + offset++, ACC_OF)) << 8u;
+        oper->data = oper->embedded.h;
         break;
     case 12: /* Byte Displacement */
     case 13: /* Byte Displacement Deferred */
         oper->embedded.b = read_b(pa + offset++, ACC_OF);
+        oper->data = oper->embedded.b;
         break;
     case 14: /* Absolute Deferred, Extended-Operand */
         switch (oper->reg) {
@@ -1103,8 +1120,6 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
         cpu_abort(NORMAL_EXCEPTION, INVALID_DESCRIPTOR);
     }
 
-    oper->data = oper->embedded.w;
-
     return offset;
 }
 
@@ -1133,8 +1148,8 @@ uint8 decode_instruction(instr *instr)
 
     /* Store off the PC and and PSW for history keeping */
     instr->psw = R[NUM_PSW];
-    instr->sp = R[NUM_SP];
-    instr->pc = pa;
+    instr->sp  = R[NUM_SP];
+    instr->pc  = pa;
 
     /* Reset our data types */
     cpu_etype = -1;
@@ -1298,6 +1313,10 @@ t_bool cpu_on_interrupt(uint8 ipl)
 {
     uint32 new_pcbp;
     uint16 id = ipl; /* TODO: Does this need to be uint16? */
+
+    sim_debug(IRQ_MSG, &cpu_dev,
+              "[%08x] [cpu_on_interrupt] ipl=%d\n",
+              R[NUM_PC], ipl);
 
     /*
      * "If a nonmaskable interrupt request is received, an auto-vector
@@ -1485,39 +1504,44 @@ t_stat sim_instr(void)
         R[NUM_PSW] &= ~PSW_TM;
         R[NUM_PSW] |= PSW_TM_MASK;
 
+        /* Record the instruction for history */
+        if (cpu_hist_size > 0) {
+            cpu_instr = &INST[cpu_hist_p];
+            cpu_hist_p = (cpu_hist_p + 1) % cpu_hist_size;
+        } else {
+            cpu_instr = &inst;
+        }
+
         /* Decode the instruction */
-        cpu_ilen = decode_instruction(&cpu_instr);
+        memset(cpu_instr, 0, sizeof(instr));
+        cpu_ilen = decode_instruction(cpu_instr);
+
+        /* Make sure to update the valid bit for history keeping (if
+         * enabled) */
+        cpu_instr->valid = TRUE;
 
         /*
          * Operate on the decoded instruction.
          */
 
         /* Get the operands */
-        if (cpu_instr.mn->src_op1 >= 0) {
-            src1 = &cpu_instr.operands[cpu_instr.mn->src_op1];
+        if (cpu_instr->mn->src_op1 >= 0) {
+            src1 = &cpu_instr->operands[cpu_instr->mn->src_op1];
         }
 
-        if (cpu_instr.mn->src_op2 >= 0) {
-            src2 = &cpu_instr.operands[cpu_instr.mn->src_op2];
+        if (cpu_instr->mn->src_op2 >= 0) {
+            src2 = &cpu_instr->operands[cpu_instr->mn->src_op2];
         }
 
-        if (cpu_instr.mn->src_op3 >= 0) {
-            src3 = &cpu_instr.operands[cpu_instr.mn->src_op3];
+        if (cpu_instr->mn->src_op3 >= 0) {
+            src3 = &cpu_instr->operands[cpu_instr->mn->src_op3];
         }
 
-        if (cpu_instr.mn->dst_op >= 0) {
-            dst = &cpu_instr.operands[cpu_instr.mn->dst_op];
+        if (cpu_instr->mn->dst_op >= 0) {
+            dst = &cpu_instr->operands[cpu_instr->mn->dst_op];
         }
 
-        /* Record the instruction for history */
-        if (cpu_hist_size > 0) {
-            /* Shallow copy */
-            INST[cpu_hist_p] = cpu_instr;
-            INST[cpu_hist_p].valid = TRUE;
-            cpu_hist_p = (cpu_hist_p + 1) % cpu_hist_size;
-        }
-
-        switch (cpu_instr.mn->opcode) {
+        switch (cpu_instr->mn->opcode) {
         case ADDW2:
         case ADDH2:
         case ADDB2:
@@ -1535,7 +1559,7 @@ t_stat sim_instr(void)
         case ALSW3:
             a = cpu_read_op(src2);
             b = cpu_read_op(src1);
-            result = a << (b & 0x1f);
+            result = (t_uint64)a << (b & 0x1f);
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
@@ -2271,7 +2295,7 @@ t_stat sim_instr(void)
             cpu_set_v_flag_op(result, dst);
             break;
         case MULW2:
-            result = cpu_read_op(src1) * cpu_read_op(dst);
+            result = (t_uint64)cpu_read_op(src1) * (t_uint64)cpu_read_op(dst);
             cpu_write_op(dst, (uint32)(result & WORD_MASK));
             cpu_set_nz_flags((uint32)(result & WORD_MASK), dst);
             cpu_set_c_flag(0);
@@ -2292,7 +2316,7 @@ t_stat sim_instr(void)
             cpu_set_v_flag_op(result, src1);
             break;
         case MULW3:
-            result = cpu_read_op(src1) * cpu_read_op(src2);
+            result = (t_uint64)cpu_read_op(src1) * (t_uint64)cpu_read_op(src2);
             cpu_write_op(dst, (uint32)(result & WORD_MASK));
             cpu_set_nz_flags((uint32)(result & WORD_MASK), dst);
             cpu_set_c_flag(0);
@@ -2779,69 +2803,58 @@ static uint32 cpu_effective_address(operand *op)
 {
     /* Register Deferred */
     if (op->mode == 5 && op->reg != 11) {
-        op->data = R[op->reg];
-        return op->data;
+        return R[op->reg];
     }
 
     /* Absolute */
     if (op->mode == 7 && op->reg == 15) {
-        op->data = op->embedded.w;
-        return op->data;
+        return op->embedded.w;
     }
 
     /* Absolute Deferred */
     if (op->mode == 14 && op->reg == 15) {
         /* May cause exception */
-        op->data = read_w(op->embedded.w, ACC_AF);
-        return op->data;
+        return read_w(op->embedded.w, ACC_AF);
     }
 
     /* FP Short Offset */
     if (op->mode == 6 && op->reg != 15) {
-        op->data = R[NUM_FP] + sign_extend_b(op->embedded.b);
-        return op->data;
+        return R[NUM_FP] + sign_extend_b(op->embedded.b);
     }
 
     /* AP Short Offset */
     if (op->mode == 7 && op->reg != 15) {
-        op->data = R[NUM_AP] + sign_extend_b(op->embedded.b);
-        return op->data;
+        return R[NUM_AP] + sign_extend_b(op->embedded.b);
     }
 
     /* Word Displacement */
     if (op->mode == 8) {
-        op->data = R[op->reg] + op->embedded.w;
-        return op->data;
+        return R[op->reg] + op->embedded.w;
     }
 
     /* Word Displacement Deferred */
     if (op->mode == 9) {
-        op->data = read_w(R[op->reg] + op->embedded.w, ACC_AF);
-        return op->data;
+        return read_w(R[op->reg] + op->embedded.w, ACC_AF);
     }
 
     /* Halfword Displacement */
     if (op->mode == 10) {
-        op->data = R[op->reg] + sign_extend_h(op->embedded.h);
-        return op->data;
+        return R[op->reg] + sign_extend_h(op->embedded.h);
     }
 
     /* Halfword Displacement Deferred */
     if (op->mode == 11) {
-        op->data = read_w(R[op->reg] + sign_extend_h(op->embedded.h), ACC_AF);
-        return op->data;
+        return read_w(R[op->reg] + sign_extend_h(op->embedded.h), ACC_AF);
     }
 
     /* Byte Displacement */
     if (op->mode == 12) {
-        op->data = R[op->reg] + sign_extend_b(op->embedded.b);
-        return op->data;
+        return R[op->reg] + sign_extend_b(op->embedded.b);
     }
 
     /* Byte Displacement Deferred */
     if (op->mode == 13) {
-        op->data = read_w(R[op->reg] + sign_extend_b(op->embedded.b), ACC_AF);
-        return op->data;
+        return read_w(R[op->reg] + sign_extend_b(op->embedded.b), ACC_AF);
     }
 
     assert(0);
@@ -3041,9 +3054,6 @@ static void cpu_write_op(operand * op, t_uint64 val)
     }
 
     eff = cpu_effective_address(op);
-    /* TODO: This is inelegant. We re-set data because
-       'cpu_effective_address' messes with it. */
-    op->data = (uint32) val;
 
     switch (op_type(op)) {
     case UW:
@@ -3383,7 +3393,7 @@ static SIM_INLINE void add(t_uint64 a, t_uint64 b, operand *dst)
  * Set PSW's ET and ISC fields, and store global exception or fault
  * state appropriately.
  */
-SIM_INLINE void cpu_abort(uint8 et, uint8 isc)
+void cpu_abort(uint8 et, uint8 isc)
 {
     /* We don't trap Integer Overflow if the OE bit is not set */
     if ((R[NUM_PSW] & PSW_OE_MASK) || isc != INTEGER_OVERFLOW) {

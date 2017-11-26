@@ -489,32 +489,28 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
       LIBEXTSAVE := $(LIBEXT)
       LIBEXT = dll.a
     endif
-    ifneq (,$(call find_include,SDL2/SDL))
-      ifneq (,$(call find_lib,SDL2))
-        VIDEO_CCDEFS += -DHAVE_LIBSDL -DUSE_SIM_VIDEO `$(realpath $(dir $(call find_include,SDL2/SDL))../../bin/sdl2-config) --cflags`
-        VIDEO_LDFLAGS += `$(realpath $(dir $(call find_include,SDL2/SDL))../../bin/sdl2-config) --libs`
-        VIDEO_FEATURES = - video capabilities provided by libSDL2 (Simple Directmedia Layer)
+    ifneq (,$(shell which sdl2-config))
+      VIDEO_CCDEFS += -DHAVE_LIBSDL -DUSE_SIM_VIDEO `sdl2-config --cflags`
+      VIDEO_LDFLAGS += `sdl2-config --libs`
+      VIDEO_FEATURES = - video capabilities provided by libSDL2 (Simple Directmedia Layer)
+      DISPLAYL = ${DISPLAYD}/display.c $(DISPLAYD)/sim_ws.c
+      DISPLAYVT = ${DISPLAYD}/vt11.c
+      DISPLAY_OPT += -DUSE_DISPLAY $(VIDEO_CCDEFS) $(VIDEO_LDFLAGS)
+      $(info using libSDL2: $(call find_include,SDL2/SDL))
+      ifeq (Darwin,$(OSTYPE))
+        VIDEO_CCDEFS += -DSDL_MAIN_AVAILABLE
+      endif
+    else
+      ifneq (,$(shell which sdl-config))
+        VIDEO_CCDEFS += -DHAVE_LIBSDL -DUSE_SIM_VIDEO `sdl-config --cflags`
+        VIDEO_LDFLAGS += `sdl-config --libs`
+        VIDEO_FEATURES = - video capabilities provided by libSDL (Simple Directmedia Layer)
         DISPLAYL = ${DISPLAYD}/display.c $(DISPLAYD)/sim_ws.c
         DISPLAYVT = ${DISPLAYD}/vt11.c
         DISPLAY_OPT += -DUSE_DISPLAY $(VIDEO_CCDEFS) $(VIDEO_LDFLAGS)
-        $(info using libSDL2: $(call find_include,SDL2/SDL))
+        $(info using libSDL: $(call find_include,SDL/SDL))
         ifeq (Darwin,$(OSTYPE))
           VIDEO_CCDEFS += -DSDL_MAIN_AVAILABLE
-        endif
-      endif
-    else
-      ifneq (,$(call find_include,SDL/SDL))
-        ifneq (,$(call find_lib,SDL))
-          VIDEO_CCDEFS += -DHAVE_LIBSDL -DUSE_SIM_VIDEO `$(realpath $(dir $(call find_include,SDL/SDL))../../bin/sdl-config) --cflags`
-          VIDEO_LDFLAGS += `$(realpath $(dir $(call find_include,SDL/SDL))../../bin/sdl-config) --libs`
-          VIDEO_FEATURES = - video capabilities provided by libSDL (Simple Directmedia Layer)
-          DISPLAYL = ${DISPLAYD}/display.c $(DISPLAYD)/sim_ws.c
-          DISPLAYVT = ${DISPLAYD}/vt11.c
-          DISPLAY_OPT += -DUSE_DISPLAY $(VIDEO_CCDEFS) $(VIDEO_LDFLAGS)
-          $(info using libSDL: $(call find_include,SDL/SDL))
-          ifeq (Darwin,$(OSTYPE))
-            VIDEO_CCDEFS += -DSDL_MAIN_AVAILABLE
-          endif
         endif
       endif
     endif
@@ -883,11 +879,11 @@ else
     $(info .)
   else
     # Version check on windows-build
-    WINDOWS_BUILD = $(shell findstr WINDOWS-BUILD ..\windows-build\Windows-Build_Versions.txt)
+    WINDOWS_BUILD = $(word 2,$(shell findstr WINDOWS-BUILD ..\windows-build\Windows-Build_Versions.txt))
     ifeq (,$(WINDOWS_BUILD))
       WINDOWS_BUILD = 00000000
     endif
-    ifneq (,$(shell if 20150412 GTR $(WINDOWS_BUILD) echo old-windows-build))
+    ifneq (,$(or $(shell if 20150412 GTR $(WINDOWS_BUILD) echo old-windows-build),$(and $(shell if 20171112 GTR $(WINDOWS_BUILD) echo old-windows-build),$(findstring pthreadGC2,$(PTHREADS_LDFLAGS)))))
       $(info .)
       $(info windows-build components at: $(abspath ..\windows-build))
       $(info .)
@@ -912,6 +908,9 @@ else
       NETWORK_OPT += -Islirp -Islirp_glue -Islirp_glue/qemu -DHAVE_SLIRP_NETWORK -DUSE_SIMH_SLIRP_DEBUG slirp/*.c slirp_glue/*.c -lIphlpapi
       NETWORK_LAN_FEATURES += NAT(SLiRP)
     endif
+  endif
+  ifneq (,$(call find_include,ddk/ntdddisk))
+    CFLAGS_I = -DHAVE_NTDDDISK_H
   endif
 endif # Win32 (via MinGW)
 ifneq (,$(GIT_COMMIT_ID))
@@ -1013,7 +1012,7 @@ ifneq ($(DONT_USE_READER_THREAD),)
 endif
 
 CC_OUTSPEC = -o $@
-CC := $(GCC) $(CC_STD) -U__STRICT_ANSI__ $(CFLAGS_G) $(CFLAGS_O) $(CFLAGS_GIT) -DSIM_COMPILER="$(COMPILER_NAME)" -I . $(OS_CCDEFS) $(ROMS_OPT)
+CC := $(GCC) $(CC_STD) -U__STRICT_ANSI__ $(CFLAGS_G) $(CFLAGS_O) $(CFLAGS_GIT) $(CFLAGS_I) -DSIM_COMPILER="$(COMPILER_NAME)" -I . $(OS_CCDEFS) $(ROMS_OPT)
 LDFLAGS := $(OS_LDFLAGS) $(NETWORK_LDFLAGS) $(LDFLAGS_O)
 
 #
@@ -1564,7 +1563,7 @@ ALL = pdp1 pdp4 pdp7 pdp8 pdp9 pdp15 pdp11 pdp10 \
 	nova eclipse hp2100 hp3000 i1401 i1620 s3 altair altairz80 gri \
 	i7094 ibm1130 id16 id32 sds lgp h316 cdc1700 \
 	swtp6800mp-a swtp6800mp-a2 tx-0 ssem b5500 isys8010 isys8020 \
-	isys8030 isys8024 imds-225 scelbi
+	isys8030 isys8024 imds-225 scelbi 3b2
 
 all : ${ALL}
 
@@ -1944,7 +1943,7 @@ ${BIN}b5500${EXE} : ${B5500} ${SIM}
 
 3b2 : $(BIN)3b2$(EXE)
  
-${BIN}3b2${EXE} : ${ATT3B2} ${SIM}
+${BIN}3b2${EXE} : ${ATT3B2} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
 	${CC} ${ATT3B2} ${SIM} ${ATT3B2_OPT} $(CC_OUTSPEC) ${LDFLAGS}
 

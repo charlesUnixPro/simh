@@ -32,6 +32,8 @@
 
 UNIT mmu_unit = { UDATA(NULL, 0, 0) };
 
+MMU_STATE mmu_state;
+
 REG mmu_reg[] = {
     { HRDATAD (ENABLE, mmu_state.enabled, 1, "Enabled?")        },
     { HRDATAD (CONFIG, mmu_state.conf,   32, "Configuration")   },
@@ -57,7 +59,7 @@ DEVICE mmu_dev = {
     DEV_DEBUG, 0, sys_deb_tab
 };
 
-t_stat mmu_init()
+t_stat mmu_init(DEVICE *dptr)
 {
     flush_caches();
     return SCPE_OK;
@@ -426,7 +428,7 @@ void pwrite_b(uint32 pa, uint8 val)
     if (addr_is_mem(pa)) {
         m = RAM;
         index = (pa - PHYS_MEM_BASE) >> 2;
-        m[index] = (m[index] & ~mask) | (uint) (val << sc);
+        m[index] = (m[index] & ~mask) | (uint32) (val << sc);
         return;
     }
 }
@@ -829,7 +831,7 @@ SIM_INLINE t_bool mmu_enabled()
     return mmu_state.enabled;
 }
 
-SIM_INLINE void mmu_enable()
+void mmu_enable()
 {
     sim_debug(EXECUTE_MSG, &mmu_dev,
               "[%08x] Enabling MMU.\n",
@@ -837,7 +839,7 @@ SIM_INLINE void mmu_enable()
     mmu_state.enabled = TRUE;
 }
 
-SIM_INLINE void mmu_disable()
+void mmu_disable()
 {
     sim_debug(EXECUTE_MSG, &mmu_dev,
               "[%08x] Disabling MMU.\n",
@@ -849,32 +851,32 @@ SIM_INLINE void mmu_disable()
  * MMU Virtual Read and Write Functions
  */
 
-SIM_INLINE uint8 read_b(uint32 va, uint8 r_acc)
+uint8 read_b(uint32 va, uint8 r_acc)
 {
     return pread_b(mmu_xlate_addr(va, r_acc));
 }
 
-SIM_INLINE uint16 read_h(uint32 va, uint8 r_acc)
+uint16 read_h(uint32 va, uint8 r_acc)
 {
     return pread_h(mmu_xlate_addr(va, r_acc));
 }
 
-SIM_INLINE uint32 read_w(uint32 va, uint8 r_acc)
+uint32 read_w(uint32 va, uint8 r_acc)
 {
     return pread_w(mmu_xlate_addr(va, r_acc));
 }
 
-SIM_INLINE void write_b(uint32 va, uint8 val)
+void write_b(uint32 va, uint8 val)
 {
     pwrite_b(mmu_xlate_addr(va, ACC_W), val);
 }
 
-SIM_INLINE void write_h(uint32 va, uint16 val)
+void write_h(uint32 va, uint16 val)
 {
     pwrite_h(mmu_xlate_addr(va, ACC_W), val);
 }
 
-SIM_INLINE void write_w(uint32 va, uint32 val)
+void write_w(uint32 va, uint32 val)
 {
     pwrite_w(mmu_xlate_addr(va, ACC_W), val);
 }
