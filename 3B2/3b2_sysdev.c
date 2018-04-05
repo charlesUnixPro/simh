@@ -38,6 +38,8 @@
    - tod         MM58174A Real-Time-Clock
 */
 
+#include <time.h>
+
 #include "3b2_sysdev.h"
 #include "3b2_iu.h"
 
@@ -56,6 +58,8 @@ struct timer_ctr TIMERS[3];
 uint32 *NVRAM = NULL;
 
 extern DEVICE cpu_dev;
+
+int32 tmxr_poll = 0;
 
 /* CSR */
 
@@ -82,11 +86,12 @@ BITFIELD csr_bits[] = {
 };
 
 UNIT csr_unit = {
-    UDATA(&csr_svc, UNIT_FIX, CSRSIZE)
+    UDATA(NULL, UNIT_FIX, CSRSIZE)
 };
 
 REG csr_reg[] = {
-    { HRDATADF(DATA, csr_data, 16, "CSR Data", csr_bits) }
+    { HRDATADF(DATA, csr_data, 16, "CSR Data", csr_bits) },
+    { NULL }
 };
 
 DEVICE csr_dev = {
@@ -133,12 +138,6 @@ uint32 csr_read(uint32 pa, size_t size)
     default:
         return 0;
     }
-}
-
-/* TODO: Remove once we confirm we don't need it */
-t_stat csr_svc(UNIT *uptr)
-{
-    return SCPE_OK;
 }
 
 void csr_write(uint32 pa, uint32 val, size_t size)
@@ -239,7 +238,7 @@ DEVICE nvram_dev = {
     &nvram_ex, &nvram_dep, &nvram_reset,
     NULL, &nvram_attach, &nvram_detach,
     NULL, DEV_DEBUG, 0, sys_deb_tab, NULL, NULL,
-    NULL, NULL, NULL,
+    &nvram_help, NULL, NULL,
     &nvram_description
 };
 
@@ -294,7 +293,24 @@ t_stat nvram_reset(DEVICE *dptr)
 
 const char *nvram_description(DEVICE *dptr)
 {
-    return "Non-volatile memory";
+    return "Non-volatile memory, used to store system state between boots.\n";
+}
+
+t_stat nvram_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
+{
+    fprintf(st,
+            "The NVRAM holds system state between boots. On initial startup,\n"
+            "if no valid NVRAM file is attached, you will see the message:\n"
+            "\n"
+            "     FW ERROR 1-01: NVRAM SANITY FAILURE\n"
+            "     DEFAULT VALUES ASSUMED\n"
+            "     IF REPEATED, CHECK THE BATTERY\n"
+            "\n"
+            "To avoid this message on subsequent boots, attach a new NVRAM file\n"
+            "with the SIMH command:\n"
+            "\n"
+            "     sim> ATTACH NVRAM <filename>\n");
+    return SCPE_OK;
 }
 
 t_stat nvram_attach(UNIT *uptr, CONST char *cptr)
@@ -473,7 +489,7 @@ t_stat timer0_svc(UNIT *uptr)
 t_stat timer1_svc(UNIT *uptr)
 {
     struct timer_ctr *ctr;
-    int32 t, ticks;
+    int32 ticks, t;
 
     ctr = (struct timer_ctr *)uptr->tmr;
 
@@ -490,6 +506,7 @@ t_stat timer1_svc(UNIT *uptr)
 
     t = sim_rtcn_calb(ticks, TMR_CLK);
     sim_activate_after(uptr, (uint32) (1000000 / ticks));
+    tmxr_poll = t;
 
     return SCPE_OK;
 }
@@ -658,67 +675,177 @@ void timer_write(uint32 pa, uint32 val, size_t size)
 }
 
 /*
- * MM58174A Real-Time-Clock
+ * MM58174A Time Of Day Clock
+ *
+ * Despite its name, this device is not used by the 3B2 as a clock. It
+ * is only used to store the current date and time between boots. It
+ * is set when an operator changes the date and time. Is is read at
+ * boot time. Therefore, we do not need to treat it as a clock or
+ * timer device here.
  */
 
-UNIT tod_unit = { UDATA(&tod_svc, UNIT_IDLE+UNIT_FIX, 0) };
-
-uint32 tod_reg = 0;
+UNIT tod_unit = {
+    UDATA(NULL, UNIT_FIX+UNIT_BINK, sizeof(TOD_DATA))
+};
 
 DEVICE tod_dev = {
     "TOD", &tod_unit, NULL, NULL,
     1, 16, 8, 4, 16, 32,
     NULL, NULL, &tod_reset,
-    NULL, NULL, NULL, NULL,
-    DEV_DEBUG, 0, sys_deb_tab
+    NULL, &tod_attach, &tod_detach,
+    NULL, 0, 0, sys_deb_tab, NULL, NULL,
+    &tod_help, NULL, NULL,
+    &tod_description
 };
 
 t_stat tod_reset(DEVICE *dptr)
 {
-    int32 t;
-
-    if (!sim_is_running) {
-        t = sim_rtcn_init_unit(&tod_unit, TPS_TOD, TMR_TOD);
-        sim_activate_after(&tod_unit, 1000000 / t);
+    if (tod_unit.filebuf == NULL) {
+        tod_unit.filebuf = calloc(sizeof(TOD_DATA), 1);
+        if (tod_unit.filebuf == NULL) {
+            return SCPE_MEM;
+        }
     }
 
     return SCPE_OK;
 }
 
-t_stat tod_svc(UNIT *uptr)
+t_stat tod_attach(UNIT *uptr, CONST char *cptr)
 {
-    int32 t;
+    t_stat r;
 
-    t = sim_rtcn_calb(TPS_TOD, TMR_TOD);
-    sim_activate_after(&tod_unit, 1000000 / TPS_TOD);
+    uptr->flags = uptr->flags | (UNIT_ATTABLE | UNIT_BUFABLE);
 
-    tod_reg++;
-    return SCPE_OK;
+    r = attach_unit(uptr, cptr);
+
+    if (r != SCPE_OK) {
+        uptr->flags = uptr->flags & (uint32) ~(UNIT_ATTABLE | UNIT_BUFABLE);
+    } else {
+        uptr->hwmark = (uint32) uptr->capac;
+    }
+
+    return r;
+}
+
+t_stat tod_detach(UNIT *uptr)
+{
+    t_stat r;
+
+    r = detach_unit(uptr);
+
+    if ((uptr->flags & UNIT_ATT) == 0) {
+        uptr->flags = uptr->flags & (uint32) ~(UNIT_ATTABLE | UNIT_BUFABLE);
+    }
+
+    return r;
+}
+
+/*
+ * Re-set the tod_data registers based on the current simulated time.
+ */
+void tod_resync()
+{
+    struct timespec now;
+    struct tm tm;
+    time_t sec;
+    TOD_DATA *td = (TOD_DATA *)tod_unit.filebuf;
+
+    sim_rtcn_get_time(&now, TMR_CLK);
+    sec = now.tv_sec - td->delta;
+
+    /* Populate the tm struct based on current sim_time */
+    tm = *localtime(&sec);
+
+    td->tsec = 0;
+    td->unit_sec = tm.tm_sec % 10;
+    td->ten_sec = tm.tm_sec / 10;
+    td->unit_min = tm.tm_min % 10;
+    td->ten_min = tm.tm_min / 10;
+    td->unit_hour = tm.tm_hour % 10;
+    td->ten_hour = tm.tm_hour / 10;
+    /* tm struct stores as 0-11, tod struct as 1-12 */
+    td->unit_mon = (tm.tm_mon + 1) % 10;
+    td->ten_mon = (tm.tm_mon + 1) / 10;
+    td->unit_day = tm.tm_mday % 10;
+    td->ten_day = tm.tm_mday / 10;
+    td->year = 1 << ((tm.tm_year - 1) % 4);
+}
+
+/*
+ * Re-calculate the delta between real time and simulated time
+ */
+void tod_update_delta()
+{
+    struct timespec now;
+    struct tm tm = {0};
+    time_t ssec;
+    TOD_DATA *td = (TOD_DATA *)tod_unit.filebuf;
+    sim_rtcn_get_time(&now, TMR_CLK);
+
+    /* Compute the simulated seconds value */
+    tm.tm_sec = (td->ten_sec * 10) + td->unit_sec;
+    tm.tm_min = (td->ten_min * 10) + td->unit_min;
+    tm.tm_hour = (td->ten_hour * 10) + td->unit_hour;
+    /* tm struct stores as 0-11, tod struct as 1-12 */
+    tm.tm_mon = ((td->ten_mon * 10) + td->unit_mon) - 1;
+    tm.tm_mday = (td->ten_day * 10) + td->unit_day;
+    switch(td->year) {
+    case 1: /* Leap Year - 3 */
+        tm.tm_year = 85;
+        break;
+    case 2: /* Leap Year - 2 */
+        tm.tm_year = 86;
+        break;
+    case 4: /* Leap Year - 1 */
+        tm.tm_year = 87;
+        break;
+    case 8: /* Leap Year */
+        tm.tm_year = 88;
+        break;
+    default:
+        break;
+    }
+    tm.tm_isdst = 0;
+    ssec = mktime(&tm);
+    td->delta = (int32)(now.tv_sec - ssec);
 }
 
 uint32 tod_read(uint32 pa, size_t size)
 {
-    uint32 reg;
+    uint8 reg;
+    TOD_DATA *td = (TOD_DATA *)(tod_unit.filebuf);
+
+    tod_resync();
 
     reg = pa - TODBASE;
 
-    sim_debug(READ_MSG, &tod_dev,
-              "[%08x] READ TOD: reg=%02x\n",
-              R[NUM_PC], reg);
-
     switch(reg) {
     case 0x04:        /* 1/10 Sec    */
+        return td->tsec;
     case 0x08:        /* 1 Sec       */
+        return td->unit_sec;
     case 0x0c:        /* 10 Sec      */
+        return td->ten_sec;
     case 0x10:        /* 1 Min       */
+        return td->unit_min;
     case 0x14:        /* 10 Min      */
+        return td->ten_min;
     case 0x18:        /* 1 Hour      */
+        return td->unit_hour;
     case 0x1c:        /* 10 Hour     */
+        return td->ten_hour;
     case 0x20:        /* 1 Day       */
+        return td->unit_day;
     case 0x24:        /* 10 Day      */
+        return td->ten_day;
     case 0x28:        /* Day of Week */
+        return td->wday;
     case 0x2c:        /* 1 Month     */
+        return td->unit_mon;
     case 0x30:        /* 10 Month    */
+        return td->ten_mon;
+    case 0x34:        /* Year        */
+        return td->year;
     default:
         break;
     }
@@ -729,10 +856,82 @@ uint32 tod_read(uint32 pa, size_t size)
 void tod_write(uint32 pa, uint32 val, size_t size)
 {
     uint32 reg;
+    TOD_DATA *td = (TOD_DATA *)(tod_unit.filebuf);
 
     reg = pa - TODBASE;
 
-    sim_debug(WRITE_MSG, &tod_dev,
-              "[%08x] WRITE TOD: reg=%02x val=%d\n",
-              R[NUM_PC], reg, val);
+    switch(reg) {
+    case 0x04:        /* 1/10 Sec    */
+        td->tsec = (uint8) val;
+        break;
+    case 0x08:        /* 1 Sec       */
+        td->unit_sec = (uint8) val;
+        break;
+    case 0x0c:        /* 10 Sec      */
+        td->ten_sec = (uint8) val;
+        break;
+    case 0x10:        /* 1 Min       */
+        td->unit_min = (uint8) val;
+        break;
+    case 0x14:        /* 10 Min      */
+        td->ten_min = (uint8) val;
+        break;
+    case 0x18:        /* 1 Hour      */
+        td->unit_hour = (uint8) val;
+        break;
+    case 0x1c:        /* 10 Hour     */
+        td->ten_hour = (uint8) val;
+        break;
+    case 0x20:        /* 1 Day       */
+        td->unit_day = (uint8) val;
+        break;
+    case 0x24:        /* 10 Day      */
+        td->ten_day = (uint8) val;
+        break;
+    case 0x28:        /* Day of Week */
+        td->wday = (uint8) val;
+        break;
+    case 0x2c:        /* 1 Month     */
+        td->unit_mon = (uint8) val;
+        break;
+    case 0x30:        /* 10 Month    */
+        td->ten_mon = (uint8) val;
+        break;
+    case 0x34:        /* Year */
+        td->year = (uint8) val;
+        break;
+    case 0x38:
+        if (val & 1) {
+            tod_update_delta();
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+const char *tod_description(DEVICE *dptr)
+{
+    return "Time-of-Day clock, used to store system time between boots.\n";
+}
+
+t_stat tod_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
+{
+    fprintf(st,
+            "The TOD is a battery-backed time-of-day clock that holds system\n"
+            "time between boots. In order to store the time, a file must be\n"
+            "attached to the TOD device with the SIMH command:\n"
+            "\n"
+            "     sim> ATTACH TOD <filename>\n"
+            "\n"
+            "On a newly installed System V Release 3 UNIX system, no system\n"
+            "time will be stored in the TOD clock. In order to set the system\n"
+            "time, run the following command from within UNIX (as root):\n"
+            "\n"
+            "     # sysadm datetime\n"
+            "\n"
+            "On subsequent boots, the correct system time will restored from\n"
+            "from the TOD.\n");
+
+    return SCPE_OK;
 }

@@ -54,10 +54,9 @@ DEVICE *sim_devices[] = {
     &tod_dev,
     &nvram_dev,
     &csr_dev,
-    &tti_a_dev,
-    &tto_a_dev,
-    &tti_b_dev,
-    &tto_b_dev,
+    &tti_dev,
+    &tto_dev,
+    &contty_dev,
     &iu_timer_dev,
     &dmac_dev,
     &if_dev,
@@ -73,14 +72,15 @@ const char *sim_stop_messages[] = {
     "IRQ",
     "Exception/Trap",
     "Exception Stack Too Deep",
-    "Unimplemented MMU Feature"
+    "Unimplemented MMU Feature",
+    "System Powered Off"
 };
 
 void full_reset()
 {
     cpu_reset(&cpu_dev);
-    tti_a_reset(&tti_a_dev);
-    tti_b_reset(&tti_b_dev);
+    tti_reset(&tti_dev);
+    contty_reset(&contty_dev);
     iu_timer_reset(&iu_timer_dev);
     timer_reset(&timer_dev);
     if_reset(&if_dev);
@@ -160,17 +160,16 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
     num = 0;
     vp = 0;
 
+    if (sw & (int32) SWMASK('M')) {
+        return fprint_sym_m(of, addr, val);
+    }
+
     if (sw & (int32) SWMASK ('B')) {
         len = 1;
     } else if (sw & (int32) SWMASK ('H')) {
         len = 2;
     } else if (sw & (int32) SWMASK ('W')) {
         len = 4;
-    }
-
-    if (sw & (int32) SWMASK('M')) {
-        fprint_sym_m(of, cpu_instr);
-        return SCPE_OK;
     }
 
     if (sw & (int32) SWMASK('C')) {

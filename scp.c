@@ -474,19 +474,13 @@ typedef enum {
     SW_NUMBER           /* Numeric Value */
     } SWITCH_PARSE;
 SWITCH_PARSE get_switches (const char *cptr, int32 *sw_val, int32 *sw_number);
-CONST char *get_sim_sw (CONST char *cptr);
-t_stat get_aval (t_addr addr, DEVICE *dptr, UNIT *uptr);
-t_value get_rval (REG *rptr, uint32 idx);
 void put_rval (REG *rptr, uint32 idx, t_value val);
 void fprint_help (FILE *st);
 void fprint_stopped (FILE *st, t_stat r);
 void fprint_capac (FILE *st, DEVICE *dptr, UNIT *uptr);
 void fprint_sep (FILE *st, int32 *tokens);
-char *read_line (char *ptr, int32 size, FILE *stream);
-char *read_line_p (const char *prompt, char *ptr, int32 size, FILE *stream);
 REG *find_reg_glob (CONST char *ptr, CONST char **optr, DEVICE **gdptr);
 REG *find_reg_glob_reason (CONST char *cptr, CONST char **optr, DEVICE **gdptr, t_stat *stat);
-char *sim_trim_endspc (char *cptr);
 
 /* Forward references */
 
@@ -541,7 +535,7 @@ UNIT *sim_dfunit = NULL;
 DEVICE **sim_internal_devices = NULL;
 uint32 sim_internal_device_count = 0;
 int32 sim_opt_out = 0;
-int32 sim_is_running = 0;
+volatile t_bool sim_is_running = FALSE;
 t_bool sim_processing_event = FALSE;
 uint32 sim_brk_summ = 0;
 uint32 sim_brk_types = 0;
@@ -564,7 +558,8 @@ size_t *sim_sub_instr_off = NULL;
 static double sim_time;
 static uint32 sim_rtime;
 static int32 noqueue_time;
-volatile int32 stop_cpu = 0;
+volatile t_bool stop_cpu = FALSE;
+static unsigned int sim_stop_sleep_ms = 250;
 static char **sim_argv;
 t_value *sim_eval = NULL;
 static t_value sim_last_val;
@@ -585,7 +580,8 @@ static int32 sim_do_depth = 0;
 static t_bool sim_cmd_echoed = FALSE;                   /* Command was emitted already prior to message output */
 
 static int32 sim_on_check[MAX_DO_NEST_LVL+1];
-static char *sim_on_actions[MAX_DO_NEST_LVL+1][SCPE_MAX_ERR+1];
+static char *sim_on_actions[MAX_DO_NEST_LVL+1][SCPE_MAX_ERR+2];
+#define ON_SIGINT_ACTION (SCPE_MAX_ERR+1)
 static char sim_do_filename[MAX_DO_NEST_LVL+1][CBUFSIZE];
 static const char *sim_do_ocptr[MAX_DO_NEST_LVL+1];
 static const char *sim_do_label[MAX_DO_NEST_LVL+1];
@@ -959,6 +955,14 @@ static const char simh_help[] =
       "+++++++++D MQ 0\n"
       "++BREAK 100;                 delete action on break at 100\n\n"
        /***************** 80 character line width template *************************/
+#define HLP_DEBUG       "*Commands Stopping_The_Simulator User_Specified_Stop_Conditions DEBUG"
+#define HLP_NODEBUG     "*Commands Stopping_The_Simulator User_Specified_Stop_Conditions DEBUG"
+      "4Debug\n"
+      " The DEBUG snd NODEBUG commands are aliases for the \"SET DEBUG\" and\n"
+      " \"SET NODEBUG\" commands.  Additionally, support is provided that is\n"
+      " equivalent to the \"SET <dev> DEBUG=opt1{;opt2}\" and\n"
+      " \"SET <dev> NODEBUG=opt1{;opt2}\" commands.\n\n"
+       /***************** 80 character line width template *************************/
       "2Connecting and Disconnecting Devices\n"
       " Except for main memory and network devices, units are simulated as\n"
       " unstructured binary disk files in the host file system.  Before using a\n"
@@ -1074,66 +1078,66 @@ static const char simh_help[] =
        /***************** 80 character line width template *************************/
 #define HLP_SET_CONSOLE "*Commands SET CONSOLE"
       "3Console\n"
-      "+set console arg{,arg...}    set console options\n"
-      "+set console WRU=value       specify console drop to simh character\n"
-      "+set console BRK=value       specify console Break character\n"
-      "+set console DEL=value       specify console delete character\n"
-      "+set console PCHAR=bitmask   bit mask of printable characters in\n"
+      "+SET CONSOLE arg{,arg...}    set console options\n"
+      "+SET CONSOLE WRU=value       specify console drop to simh character\n"
+      "+SET CONSOLE BRK=value       specify console Break character\n"
+      "+SET CONSOLE DEL=value       specify console delete character\n"
+      "+SET CONSOLE PCHAR=bitmask   bit mask of printable characters in\n"
       "++++++++                     range [31,0]\n"
-      "+set console SPEED=speed{*factor}\n"
+      "+SET CONSOLE SPEED=speed{*factor}\n"
       "++++++++                     specify console input data rate\n"
-      "+set console TELNET=port     specify console telnet port\n"
-      "+set console TELNET=LOG=log_file\n"
+      "+SET CONSOLE TELNET=port     specify console telnet port\n"
+      "+SET CONSOLE TELNET=LOG=log_file\n"
       "++++++++                     specify console telnet logging to the\n"
       "++++++++                     specified destination {LOG,STDOUT,STDERR,\n"
       "++++++++                     DEBUG or filename)\n"
-      "+set console TELNET=NOLOG    disables console telnet logging\n"
-      "+set console TELNET=BUFFERED[=bufsize]\n"
+      "+SET CONSOLE TELNET=NOLOG    disables console telnet logging\n"
+      "+SET CONSOLE TELNET=BUFFERED[=bufsize]\n"
       "++++++++                     specify console telnet buffering\n"
-      "+set console TELNET=NOBUFFERED\n"
+      "+SET CONSOLE TELNET=NOBUFFERED\n"
       "++++++++                     disables console telnet buffering\n"
-      "+set console TELNET=UNBUFFERED\n"
+      "+SET CONSOLE TELNET=UNBUFFERED\n"
       "++++++++                     disables console telnet buffering\n"
-      "+set console NOTELNET        disable console telnet\n"
-      "+set console SERIAL=serialport[;config]\n"
+      "+SET CONSOLE NOTELNET        disable console telnet\n"
+      "+SET CONSOLE SERIAL=serialport[;config]\n"
       "++++++++                     specify console serial port and optionally\n"
       "++++++++                     the port config (i.e. ;9600-8n1)\n"
-      "+set console NOSERIAL        disable console serial session\n"
-      "+set console SPEED=nn{*fac}  specifies the maximum console port input rate\n"
+      "+SET CONSOLE NOSERIAL        disable console serial session\n"
+      "+SET CONSOLE SPEED=nn{*fac}  specifies the maximum console port input rate\n"
        /***************** 80 character line width template *************************/
 #define HLP_SET_REMOTE "*Commands SET REMOTE"
       "3Remote\n"
-      "+set remote TELNET=port      specify remote console telnet port\n"
-      "+set remote NOTELNET         disables remote console\n"
-      "+set remote BUFFERSIZE=bufsize\n"
+      "+SET REMOTE TELNET=port      specify remote console telnet port\n"
+      "+SET REMOTE NOTELNET         disables remote console\n"
+      "+SET REMOTE BUFFERSIZE=bufsize\n"
       "++++++++                     specify remote console command output buffer\n"
       "++++++++                     size\n"
-      "+set remote CONNECTIONS=n    specify number of concurrent remote\n"
+      "+SET REMOTE CONNECTIONS=n    specify number of concurrent remote\n"
       "++++++++                     console sessions\n"
-      "+set remote TIMEOUT=n        specify number of seconds without input\n"
+      "+SET REMOTE TIMEOUT=n        specify number of seconds without input\n"
       "++++++++                     before automatic continue\n"
-      "+set remote MASTER           enable master mode remote console\n"
-      "+set remote NOMASTER         disable remote master mode console\n"
+      "+SET REMOTE MASTER           enable master mode remote console\n"
+      "+SET REMOTE NOMASTER         disable remote master mode console\n"
 #define HLP_SET_DEFAULT "*Commands SET Working_Directory"
       "3Working Directory\n"
-      "+set default <dir>           set the current directory\n"
-      "+cd <dir>                    set the current directory\n"
+      "+SET DEFAULT <dir>           set the current directory\n"
+      "+CD <dir>                    set the current directory\n"
 #define HLP_SET_LOG    "*Commands SET Log"
       "3Log\n"
       " Interactions with the simulator session (at the \"sim>\" prompt\n"
       " can be recorded to a log file\n\n"
-      "+set log log_file            specify the log destination\n"
+      "+SET LOG log_file            specify the log destination\n"
       "++++++++                     (STDOUT,DEBUG or filename)\n"
-      "+set nolog                   disables any currently active logging\n"
+      "+SET NOLOG                   disables any currently active logging\n"
       "4Switches\n"
       " By default, log output is written at the end of the specified log file.\n"
       " A new log file can created if the -N switch is used on the command line.\n"
 #define HLP_SET_DEBUG  "*Commands SET Debug"
        /***************** 80 character line width template *************************/
       "3Debug\n"
-      "+set debug debug_file        specify the debug destination\n"
+      "+SET DEBUG debug_file        specify the debug destination\n"
       "++++++++                     (STDOUT,STDERR,LOG or filename)\n"
-      "+set nodebug                 disables any currently active debug output\n"
+      "+SET NODEBUG                 disables any currently active debug output\n"
       "4Switches\n"
       " Debug message output contains a timestamp which indicates the number of\n"
       " simulated instructions which have been executed prior to the debug event.\n\n"
@@ -1163,87 +1167,111 @@ static const char simh_help[] =
       " EBCDIC characters.\n"
 #define HLP_SET_BREAK  "*Commands SET Breakpoints"
       "3Breakpoints\n"
-      "+set break <list>            set breakpoints\n"
-      "+set nobreak <list>          clear breakpoints\n"
+      "+SET BREAK <list>            set breakpoints\n"
+      "+SET NOBREAK <list>          clear breakpoints\n"
        /***************** 80 character line width template *************************/
 #define HLP_SET_THROTTLE "*Commands SET Throttle"
       "3Throttle\n"
-      "+set throttle {x{M|K|%%}}|{x/t}\n"
-      "++++++++                     set simulation rate\n"
-      "+set nothrottle              set simulation rate to maximum\n"
+      " Simulator instruction execution rate can be controlled by specifying\n"
+      " one of the following throttle commands:\n\n"
+      "+SET THROTTLE xM             execute x million instructions per second\n"
+      "+SET THROTTLE xK             execute x thousand instructions per second\n"
+      "+SET THROTTLE x%%             occupy x percent of the host capacity\n"
+      "++++++++executing instructions\n"
+      "+SET THROTTLE x/t            sleep for t milliseconds after executing x\n"
+      "++++++++instructions\n\n"
+      "+SET NOTHROTTLE              set simulation rate to maximum\n\n"
+      " Throttling is only available on host systems that implement a precision\n"
+      " real-time delay function.\n\n"
+      " xM, xK and x%% modes require the simulator to execute sufficient\n"
+      " instructions to actually calibrate the desired execution rate relative\n"
+      " to wall clock time.  Very short running programs may complete before\n"
+      " calibration completes and therefore before the simulated execution rate\n"
+      " can match the desired rate.\n\n"
+      " The SET NOTHROTTLE command turns off throttling.  The SHOW THROTTLE\n"
+      " command shows the current settings for throttling and the calibration\n"
+      " results\n\n"
+      " Some simulators implement a different form of host CPU resource management\n"
+      " called idling.  Idling suspends simulated execution whenever the program\n"
+      " running in the simulator is doing nothing, and runs the simulator at full\n"
+      " speed when there is work to do.  Throttling and idling are mutually\n"
+      " exclusive.\n"
 #define HLP_SET_CLOCKS "*Commands SET Clocks"
       "3Clock\n"
 #if defined (SIM_ASYNCH_CLOCKS)
-      "+set clock asynch            enable asynchronous clocks\n"
-      "+set clock noasynch          disable asynchronous clocks\n"
+      "+SET CLOCK asynch            enable asynchronous clocks\n"
+      "+SET CLOCK noasynch          disable asynchronous clocks\n"
 #endif
-      "+set clock nocatchup         disable catchup clock ticks\n"
-      "+set clock catchup           enable catchup clock ticks\n"
-      "+set clock calib=n%%          specify idle calibration skip %%\n"
+      "+SET CLOCK nocatchup         disable catchup clock ticks\n"
+      "+SET CLOCK catchup           enable catchup clock ticks\n"
+      "+SET CLOCK calib=n%%          specify idle calibration skip %%\n"
+      "+SET CLOCK stop=n            stop execution after n instructions\n\n"
+      " The SET CLOCK STOP command allows execution to have a bound when\n"
+      " execution starts with a BOOT, NEXT or CONTINUE command.\n"
 #define HLP_SET_ASYNCH "*Commands SET Asynch"
       "3Asynch\n"
-      "+set asynch                  enable asynchronous I/O\n"
-      "+set noasynch                disable asynchronous I/O\n"
+      "+SET ASYNCH                  enable asynchronous I/O\n"
+      "+SET NOASYNCH                disable asynchronous I/O\n"
 #define HLP_SET_ENVIRON "*Commands SET Environment"
       "3Environment\n"
       "4Explicitily Changing A Variable\n"
-      "+set environment name=val    set environment variable\n"
-      "+set environment name        clear environment variable\n"
+      "+SET ENVIRONMENT name=val    set environment variable\n"
+      "+SET ENVIRONMENT name        clear environment variable\n"
       "4Gathering Input From A User\n"
       " Input from a user can be obtained by:\n\n"
-      "+set environment -p \"Prompt String\" name=default\n\n"
-      " The -p switch indicates that the user should be prompted\n"
+      "+set environment -P \"Prompt String\" name=default\n\n"
+      " The -P switch indicates that the user should be prompted\n"
       " with the indicated prompt string and the input provided\n"
       " will be saved in the environment variable 'name'.  If no\n"
       " input is provided, the value specified as 'default' will be\n"
       " used.\n"
 #define HLP_SET_ON      "*Commands SET Command_Status_Trap_Dispatching"
       "3Command Status Trap Dispatching\n"
-      "+set on                      enables error checking after command\n"
+      "+SET ON                      enables error checking after command\n"
       "++++++++                     execution\n"
-      "+set noon                    disables error checking after command\n"
+      "+SET NOON                    disables error checking after command\n"
       "++++++++                     execution\n"
-      "+set on inherit              enables inheritance of ON state and\n"
+      "+SET ON INHERIT              enables inheritance of ON state and\n"
       "++++++++                     actions into do command files\n"
-      "+set on noinherit            disables inheritance of ON state and\n"
+      "+SET ON NOINHERIT            disables inheritance of ON state and\n"
       "++++++++                     actions into do command files\n"
 #define HLP_SET_VERIFY "*Commands SET Command_Execution_Display"
 #define HLP_SET_VERIFY "*Commands SET Command_Execution_Display"
       "3Command Execution Display\n"
-      "+set verify                  re-enables display of command file\n"
+      "+SET VERIFY                  re-enables display of command file\n"
       "++++++++                     processed commands\n"
-      "+set verbose                 re-enables display of command file\n"
+      "+SET VERBOSE                 re-enables display of command file\n"
       "++++++++                     processed commands\n"
-      "+set noverify                disables display of command file processed\n"
+      "+SET NOVERIFY                disables display of command file processed\n"
       "++++++++                     commands\n"
-      "+set noverbose               disables display of command file processed\n"
+      "+SET NOVERBOSE               disables display of command file processed\n"
       "++++++++                     commands\n"
 #define HLP_SET_MESSAGE "*Commands SET Command_Error_Status_Display"
       "3Command Error Status Display\n"
-      "+set message                 re-enables display of command file error\n"
+      "+SET MESSAGE                 re-enables display of command file error\n"
       "++++++++                     messages\n"
-      "+set nomessage               disables display of command file error\n"
+      "+SET NOMESSAGE               disables display of command file error\n"
       "++++++++                     messages\n"
 #define HLP_SET_QUIET "*Commands SET Command_Output_Display"
       "3Command Output Display\n"
-      "+set quiet                   disables suppression of some output and\n"
+      "+SET QUIET                   disables suppression of some output and\n"
       "++++++++                     messages\n"
-      "+set noquiet                 re-enables suppression of some output and\n"
+      "+SET NOQUIET                 re-enables suppression of some output and\n"
       "++++++++                     messages\n"
 #define HLP_SET_PROMPT "*Commands SET Command_Prompt"
       "3Command Prompt\n"
-      "+set prompt \"string\"        sets an alternate simulator prompt string\n"
+      "+SET PROMPT \"string\"        sets an alternate simulator prompt string\n"
       "3Device and Unit\n"
-      "+set <dev> OCT|DEC|HEX|BIN   set device display radix\n"
-      "+set <dev> ENABLED           enable device\n"
-      "+set <dev> DISABLED          disable device\n"
-      "+set <dev> DEBUG{=arg}       set device debug flags\n"
-      "+set <dev> NODEBUG={arg}     clear device debug flags\n"
-      "+set <dev> arg{,arg...}      set device parameters (see show modifiers)\n"
-      "+set <unit> ENABLED          enable unit\n"
-      "+set <unit> DISABLED         disable unit\n"
-      "+set <unit> arg{,arg...}     set unit parameters (see show modifiers)\n"
-      "+help <dev> set              displays the device specific set commands\n"
+      "+SET <dev> OCT|DEC|HEX|BIN   set device display radix\n"
+      "+SET <dev> ENABLED           enable device\n"
+      "+SET <dev> DISABLED          disable device\n"
+      "+SET <dev> DEBUG{=arg}       set device debug flags\n"
+      "+SET <dev> NODEBUG={arg}     clear device debug flags\n"
+      "+SET <dev> arg{,arg...}      set device parameters (see show modifiers)\n"
+      "+SET <unit> ENABLED          enable unit\n"
+      "+SET <unit> DISABLED         disable unit\n"
+      "+SET <unit> arg{,arg...}     set unit parameters (see show modifiers)\n"
+      "+HELP <dev> SET              displays the device specific set commands\n"
       "++++++++                     available\n"
        /***************** 80 character line width template *************************/
 #define HLP_SHOW        "*Commands SHOW"
@@ -1546,6 +1574,10 @@ static const char simh_help[] =
       " Assertion failed\n"
       "5 INVREM\n"
       " Invalid remote console command\n"
+      "5 NOTATT\n"
+      " Not attached \n"
+      "5 AMBREG\n"
+      " Ambiguous register\n"
 #define HLP_SHIFT       "*Commands Executing_Command_Files SHIFT"
       "3SHIFT\n"
       "++shift                    shift the command file's positional parameters\n"
@@ -1553,10 +1585,59 @@ static const char simh_help[] =
       "3CALL\n"
       "++call                     transfer control to a labeled subroutine\n"
       "                         a command file.\n"
-#define HLP_ON          "*Commands Executing_Command_Files ON"
-      "3ON\n"
-      "++on <condition> <action>  perform action(s) after condition\n"
-      "++on <condition>           clear action for specific condition\n"
+       /***************** 80 character line width template *************************/
+#define HLP_ON          "*Commands Executing_Command_Files Error_Trapping"
+      "3Error Trapping\n"
+      " Error traps can be taken when any command returns a non success status.\n"
+      " Actions to be performed for particular status returns are specified with\n"
+      " the ON command.\n"
+      "4Enabling Error Traps\n"
+      " Error trapping is enabled with:\n\n"
+      "++set on                   enable error traps\n"
+      "4Disabling Error Traps\n"
+      " Error trapping is disabled with:\n\n"
+      "++set noon                 disable error traps\n"
+      "4ON\n"
+      " To set the action(s) to take when a specific error status is returned by\n"
+      " a command in the currently running do command file:\n\n"
+      "++on <statusvalue> commandtoprocess{; additionalcommandtoprocess}\n\n"
+      " To clear the action(s) taken take when a specific error status is returned:\n\n"
+      "++on <statusvalue>\n\n"
+      " To set the default action(s) to take when any otherwise unspecified error\n"
+      " status is returned by a command in the currently running do command file:\n\n"
+      "++on error commandtoprocess{; additionalcommandtoprocess}\n\n"
+      " To clear the default action(s) taken when any otherwise unspecified error\n"
+      " status is returned:\n\n"
+      "++on error\n"
+      "5Parameters\n"
+      " Error traps can be taken for any command which returns a status other\n"
+      " than SCPE_STEP, SCPE_OK, and SCPE_EXIT.\n\n"
+      " ON Traps can specify any of these status values:\n\n"
+      "++NXM, UNATT, IOERR, CSUM, FMT, NOATT, OPENERR, MEM, ARG,\n"
+      "++STEP, UNK, RO, INCOMP, STOP, TTIERR, TTOERR, EOF, REL,\n"
+      "++NOPARAM, ALATT, TIMER, SIGERR, TTYERR, SUB, NOFNC, UDIS,\n"
+      "++NORO, INVSW, MISVAL, 2FARG, 2MARG, NXDEV, NXUN, NXREG,\n"
+      "++NXPAR, NEST, IERR, MTRLNT, LOST, TTMO, STALL, AFAIL,\n"
+      "++NOTATT, AMBREG\n\n"
+      " These values can be indicated by name or by their internal\n"
+      " numeric value (not recommended).\n"
+      /***************** 80 character line width template *************************/
+      "3CONTROL-C Trapping\n"
+      " A special ON trap is available to describe action(s) to be taken\n"
+      " when CONTROL_C (aka SIGINT) occurs during the execution of\n"
+      " simh commands and/or command procedures.\n\n"
+      "++on CONTROL_C <action>    perform action(s) after CTRL+C\n"
+      "++on CONTROL_C             restore default CTRL+C action\n\n"
+      " The default ON CONTROL_C handler will exit nested DO command\n"
+      " procedures and return to the sim> prompt.\n\n"
+      " Note 1: When a simulator is executing instructions entering CTRL+C\n"
+      "+will cause the CNTL+C character to be delivered to the simulator as\n"
+      "+input.  The simulator instruction execution can be stopped by entering\n"
+      "+the WRU character (usually CTRL+E).  Once instruction execution has\n"
+      "+stopped, CTRL+C can be entered and potentially acted on by the\n"
+      "+ON CONTROL_C trap handler.\n"
+      " Note 2: The ON CONTROL_C trapping is not affected by the SET ON and\n"
+      "+SET NOON commands.\n"
 #define HLP_PROCEED     "*Commands Executing_Command_Files PROCEED"
 #define HLP_IGNORE      "*Commands Executing_Command_Files PROCEED"
        /***************** 80 character line width template *************************/
@@ -1565,57 +1646,71 @@ static const char simh_help[] =
       " placeholders for an ON action condition which should be explicitly ignored\n"
       "++proceed                  continue command file execution without doing anything\n"
       "++ignore                   continue command file execution without doing anything\n"
-
-#if 0
-
-    SET ON                       Enables error trapping for currently defined 
-                                 traps (by ON commands)
-    SET NOON                     Disables error trapping for currently 
-                                 defined traps (by ON commands)
-    ON <statusvalue> commandtoprocess{; additionalcommandtoprocess}
-                                 Sets the action(s) to take when the specific 
-                                 error status is returned by a command in the 
-                                 currently running do command file.  Multiple 
-                                 actions can be specified with each delimited 
-                                 by a semicolon character (just like 
-                                 breakpoint action commands).
-    ON ERROR commandtoprocess{; additionalcommandtoprocess}
-                                 Sets the default action(s) to take when any 
-                                 otherwise unspecified error status is returned 
-                                 by a command in the currently running do 
-                                 command file.  Multiple actions can be 
-                                 specified with each delimited by a semicolon 
-                                 character (just like breakpoint action 
-                                 commands).
-    ON <statusvalue>                   
-    ON ERROR                     Clears the default actions to take when any 
-                                 otherwise unspecified error status is 
-                                 returned by a command in the currently 
-                                 running do command file.
-
-
-Error traps can be taken for any command which returns a status other than SCPE_STEP, SCPE_OK, and SCPE_EXIT.   
-
-ON Traps can specify any status value from the following list: NXM, UNATT, IOERR, CSUM, FMT, NOATT, OPENERR, MEM, ARG, STEP, UNK, RO, INCOMP, STOP, TTIERR, TTOERR, EOF, REL, NOPARAM, ALATT, TIMER, SIGERR, TTYERR, SUB, NOFNC, UDIS, NORO, INVSW, MISVAL, 2FARG, 2MARG, NXDEV, NXUN, NXREG, NXPAR, NEST, IERR, MTRLNT, LOST, TTMO, STALL, AFAIL.  These values can be indicated by name or by their internal numeric value (not recommended).
-
-Interactions with ASSERT command and "DO -e":
-DO -e       is equivalent to SET ON, which by itself it equivalent to "SET ON; ON ERROR RETURN".
-ASSERT      failure have several different actions:
-       If error trapping is not enabled then AFAIL causes exit from the current do command file.
-       If error trapping is enabled and an explicit "ON AFAIL" action is defined, then the specified action is performed.
-       If error trapping is enabled and no "ON AFAIL" action is defined, then an AFAIL causes exit from the current do command file.
-
-#endif
-
-
-#define HLP_ECHO        "*Commands Executing_Command_Files Displaying_Arbitrary_Text"
+      "3DO Command Processing Interactions With ASSERT\n"
+      " The command:\n\n"
+      "++DO -e commandfile\n\n"
+      " is equivalent to starting the invoked command file with:\n\n"
+      "++SET ON\n\n"
+      " which by itself it equivalent to:\n\n"
+      "++SET ON\n"
+      "++ON ERROR RETURN\n\n"
+      " ASSERT failures have several different actions:\n\n"
+      "+*   If error trapping is not enabled then AFAIL causes exit from the\n"
+      "++current do command file.\n"
+      "+*   If error trapping is enabled and an explicit \"ON AFAIL\" action\n"
+      "++is defined, then the specified action is performed.\n"
+      "+*   If error trapping is enabled and no \"ON AFAIL\" action is defined,\n"
+      "++then an AFAIL causes exit from the current do command file.\n"
+#define HLP_ECHO        "*Commands Executing_Command_Files Displaying_Arbitrary_Text ECHO_Command"
        /***************** 80 character line width template *************************/
       "3Displaying Arbitrary Text\n"
-      " The ECHO command is a useful way of annotating command files.  ECHO prints\n"
-      " out its arguments on the console (and log):\n\n"
+      " The ECHO and ECHOF commands are useful ways of annotating command files.\n\n"
+      "4ECHO command\n"
+      " The ECHO command prints out its arguments on the console (and log)\n"
+      " followed by a newline:\n\n"
       "++ECHO <string>      output string to console\n\n"
       " If there is no argument, ECHO prints a blank line on the console.  This\n"
       " may be used to provide spacing in the console display or log.\n"
+       /***************** 80 character line width template *************************/
+#define HLP_ECHOF       "*Commands Executing_Command_Files Displaying_Arbitrary_Text ECHOF_Command"
+       /***************** 80 character line width template *************************/
+      "4ECHOF command\n"
+      " The ECHOF command prints out its arguments on the console (and log)\n"
+      " followed by a newline:\n\n"
+       /***************** 80 character line width template *************************/
+      "++ECHOF {-n} \"<string>\"|<string>   output string to console\n\n"
+      " If there is no argument, ECHOF prints a blank line on the console.\n"
+      " The string argument may be delimited by quote characters.  Quotes may\n"
+      " be either single or double but the opening and closing quote characters\n"
+      " must match.  If the string is enclosed in quotes, the string may\n"
+      " contain escaped character strings which is interpreted as described\n"
+      " in Quoted_String_Data and the resulting string is output.\n\n"
+      " A command alias can be used to replace the ECHO command with the ECHOF\n"
+      " command:\n\n"
+      "++sim> SET ENV ECHO=ECHOF\n"
+      "5Switches\n"
+      " Switches can be used to influence the behavior of ECHOF commands\n\n"
+      "6-n\n"
+      " The -n switch indicates that the supplied string should be output\n"
+      " without a newline after the string is written.\n"
+      "5Quoted String Data\n"
+      " String data enclosed in quotes is transformed interpreting character\n"
+      " escapes.  The following character escapes are explicitly supported:\n"
+      "++\\r  Sends the ASCII Carriage Return character (Decimal value 13)\n"
+      "++\\n  Sends the ASCII Linefeed character (Decimal value 10)\n"
+      "++\\f  Sends the ASCII Formfeed character (Decimal value 12)\n"
+      "++\\t  Sends the ASCII Horizontal Tab character (Decimal value 9)\n"
+      "++\\v  Sends the ASCII Vertical Tab character (Decimal value 11)\n"
+      "++\\b  Sends the ASCII Backspace character (Decimal value 8)\n"
+      "++\\\\  Sends the ASCII Backslash character (Decimal value 92)\n"
+      "++\\'  Sends the ASCII Single Quote character (Decimal value 39)\n"
+      "++\\\"  Sends the ASCII Double Quote character (Decimal value 34)\n"
+      "++\\?  Sends the ASCII Question Mark character (Decimal value 63)\n"
+      "++\\e  Sends the ASCII Escape character (Decimal value 27)\n"
+      " as well as octal character values of the form:\n"
+      "++\\n{n{n}} where each n is an octal digit (0-7)\n"
+      " and hext character values of the form:\n"
+      "++\\xh{h} where each h is a hex digit (0-9A-Fa-f)\n"
        /***************** 80 character line width template *************************/
 #define HLP_SEND        "*Commands Executing_Command_Files Injecting_Console_Input"
        /***************** 80 character line width template *************************/
@@ -1623,15 +1718,20 @@ ASSERT      failure have several different actions:
       " The SEND command provides a way to insert input into the console device of\n"
       " a simulated system as if it was entered by a user.\n\n"
       "++SEND {-t} {after=nn,}{delay=nn,}\"<string>\"\n\n"
+      "++NOSEND\n\n"
+      "++SHOW SEND\n\n"
       " The string argument must be delimited by quote characters.  Quotes may\n"
       " be either single or double but the opening and closing quote characters\n"
       " must match.  Data in the string may contain escaped character strings.\n\n"
       " The SEND command can also insert input into any serial device on a\n"
       " simulated system as if it was entered by a user.\n\n"
-      "++SEND {-t} {<dev>:line} {after=nn,}{delay=nn,}\"<string>\"\n"
+      "++SEND {-t} {<dev>:line} {after=nn,}{delay=nn,}\"<string>\"\n\n"
       "++NOSEND {<dev>:line}\n\n"
+      "++SHOW SEND {<dev>:line}\n\n"
       " The NOSEND command removes any undelivered input data which may be\n"
-      " pending on a line.\n"
+      " pending on the CONSOLE or a specific multiplexer line.\n\n"
+      " The SHOW SEND command displays any pending SEND activity for the\n"
+      " CONSOLE or a specific multiplexer line.\n"
       "4Delay\n"
       " Specifies an integer (>=0) representing a minimal instruction delay\n"
       " between characters being sent.  The delay parameter can be set by\n"
@@ -1681,6 +1781,7 @@ ASSERT      failure have several different actions:
       " when specific output has been generated by the simulated system.\n\n"
       "++EXPECT {dev:line} {[count]} {HALTAFTER=n,}\"<string>\" {actioncommand {; actioncommand}...}\n\n"
       "++NOEXPECT {dev:line} \"<string>\"\n\n"
+      "++SHOW EXPECT {dev:line}\n\n"
       " The string argument must be delimited by quote characters.  Quotes may\n"
       " be either single or double but the opening and closing quote characters\n"
       " must match.  Data in the string may contain escaped character strings.\n"
@@ -1698,7 +1799,10 @@ ASSERT      failure have several different actions:
       " to match other expect rules which may already be defined.\n"
       " Data which is output prior to the definition of an expect rule is not\n"
       " eligible to be matched against.\n\n"
-      " The NOEXPECT command removes a previously defined EXPECT command.\n"
+      " The NOEXPECT command removes a previously defined EXPECT command for the\n"
+      " console or a specific multiplexer line.\n\n"
+      " The SHOW EXPECT command displays all of the pending EXPECT state for\n"
+      " the console or a specific multiplexer line.\n"
        /***************** 80 character line width template *************************/
       "4Switches\n"
       " Switches can be used to influence the behavior of EXPECT rules\n\n"
@@ -1789,7 +1893,7 @@ ASSERT      failure have several different actions:
       " 'm' for minutes, 'h' for hours or 'd' for days.  NUMBER may be an\n"
       " arbitrary floating point number.  Given two or more arguments, pause\n"
       " for the amount of time specified by the sum of their values.\n"
-      " NOTE: A SLEEP command is interruptable with SIGINT (^C).\n\n"
+      " NOTE: A SLEEP command is interruptable with SIGINT (CTRL+C).\n\n"
       /***************** 80 character line width template *************************/
 #define HLP_ASSERT      "*Commands Executing_Command_Files Testing_Simulator_State"
 #define HLP_IF          "*Commands Executing_Command_Files Testing_Simulator_State"
@@ -1874,10 +1978,11 @@ ASSERT      failure have several different actions:
       " file.  Otherwise, the next command in the command file is processed.\n\n"
       "5String Comparison Expressions\n"
       " String Values can be compared with:\n"
-      "++{-i} {NOT} \"<string1>\" <compare-op> \"<string2>\"\n\n"
+      "++{-i} {NOT} \"<string1>\"|EnVarName1 <compare-op> \"<string2>|EnvVarName2\"\n\n"
       " The -i switch, if present, causes comparisons to be case insensitive.\n"
       " <string1> and <string2> are quoted string values which may have\n"
       " environment variables substituted as desired.\n"
+      " Either quoted string may alternatively be an environment variable name.\n"
       " <compare-op> may be one of:\n\n"
       "++==  - equal\n"
       "++EQU - equal\n"
@@ -1944,6 +2049,8 @@ static CTAB cmd_table[] = {
     { "BOOT",       &run_cmd,       RU_BOOT,    HLP_BOOT,       NULL, &run_cmd_message },
     { "BREAK",      &brk_cmd,       SSH_ST,     HLP_BREAK },
     { "NOBREAK",    &brk_cmd,       SSH_CL,     HLP_NOBREAK },
+    { "DEBUG",      &debug_cmd,     1,          HLP_DEBUG},
+    { "NODEBUG",    &debug_cmd,     0,          HLP_NODEBUG },
     { "ATTACH",     &attach_cmd,    0,          HLP_ATTACH },
     { "DETACH",     &detach_cmd,    0,          HLP_DETACH },
     { "ASSIGN",     &assign_cmd,    0,          HLP_ASSIGN },
@@ -1978,6 +2085,7 @@ static CTAB cmd_table[] = {
     { "PROCEED",    &noop_cmd,      0,          HLP_PROCEED },
     { "IGNORE",     &noop_cmd,      0,          HLP_IGNORE },
     { "ECHO",       &echo_cmd,      0,          HLP_ECHO },
+    { "ECHOF",      &echof_cmd,     0,          HLP_ECHOF },
     { "ASSERT",     &assert_cmd,    1,          HLP_ASSERT },
     { "SEND",       &send_cmd,      1,          HLP_SEND },
     { "NOSEND",     &send_cmd,      0,          HLP_SEND },
@@ -2172,12 +2280,12 @@ if (sim_vm_init != NULL)                                /* call once only */
     (*sim_vm_init)();
 sim_finit ();                                           /* init fio package */
 setenv ("SIM_NAME", sim_name, 1);                       /* Publish simulator name */
-stop_cpu = 0;
+stop_cpu = FALSE;
 sim_interval = 0;
 sim_time = sim_rtime = 0;
 noqueue_time = 0;
 sim_clock_queue = QUEUE_LIST_END;
-sim_is_running = 0;
+sim_is_running = FALSE;
 sim_log = NULL;
 if (sim_emax <= 0)
     sim_emax = 1;
@@ -2202,6 +2310,7 @@ if ((stat = sim_brk_init ()) != SCPE_OK) {
         sim_error_text (stat));
     return 0;
     }
+signal (SIGINT, int_handler);
 if (!sim_quiet) {
     printf ("\n");
     show_version (stdout, NULL, NULL, 0, NULL);
@@ -2290,16 +2399,32 @@ CTAB *cmdp;
 
 stat = SCPE_BARE_STATUS(stat);                          /* remove possible flag */
 while (stat != SCPE_EXIT) {                             /* in case exit */
+    if (stop_cpu) {                                     /* SIGINT happened? */
+        stop_cpu = FALSE;
+        if (!sim_ttisatty()) {
+            stat = SCPE_EXIT;
+            break;
+            }
+        if (sim_on_actions[sim_do_depth][ON_SIGINT_ACTION])
+            sim_brk_setact (sim_on_actions[sim_do_depth][ON_SIGINT_ACTION]);
+        }
     if ((cptr = sim_brk_getact (cbuf, sizeof(cbuf))))   /* pending action? */
         printf ("%s%s\n", sim_prompt, cptr);            /* echo */
-    else if (sim_vm_read != NULL) {                     /* sim routine? */
-        printf ("%s", sim_prompt);                      /* prompt */
-        cptr = (*sim_vm_read) (cbuf, sizeof(cbuf), stdin);
+    else {
+        if (sim_vm_read != NULL) {                      /* sim routine? */
+            printf ("%s", sim_prompt);                  /* prompt */
+            cptr = (*sim_vm_read) (cbuf, sizeof(cbuf), stdin);
+            }
+        else
+            cptr = read_line_p (sim_prompt, cbuf, sizeof(cbuf), stdin);/* read with prompt*/
         }
-    else cptr = read_line_p (sim_prompt, cbuf, sizeof(cbuf), stdin);/* read with prmopt*/
-    if (cptr == NULL) {                                 /* EOF? */
-        if (sim_ttisatty()) continue;                   /* ignore tty EOF */
-        else break;                                     /* otherwise exit */
+    if (cptr == NULL) {                                 /* EOF? or SIGINT? */
+        if (sim_ttisatty()) {
+            printf ("\n");
+            continue;                                   /* ignore tty EOF */
+            }
+        else
+            break;                                      /* otherwise exit */
         }
     if (*cptr == 0)                                     /* ignore blank */
         continue;
@@ -2615,7 +2740,9 @@ if ((dptr->modifiers) && (dptr->units) && (dptr->numunits != 1)) {
         if (mptr->mstring) {
             fprint_header (st, &found, header);
             sprintf (buf, "set %s%s %s%s", sim_dname (dptr), (dptr->numunits > 1) ? "n" : "0", mptr->mstring, (strchr(mptr->mstring, '=')) ? "" : (MODMASK(mptr,MTAB_VALR) ? "=val" : (MODMASK(mptr,MTAB_VALO) ? "{=val}": "")));
-            fprintf (st, "%-30s\t%s\n", buf, (strchr(mptr->mstring, '=')) ? "" : (mptr->help ? mptr->help : ""));
+            fprintf (st, "%-30s\t%s\n", buf, (strchr (mptr->mstring, '=')) ? ((strlen (buf) > 30) ? "" : mptr->help) : (mptr->help ? mptr->help : ""));
+            if ((strchr (mptr->mstring, '=')) && (strlen (buf) > 30))
+                fprintf (st,  "%-30s\t%s\n", "", mptr->help);
             }
         }
     }
@@ -2958,6 +3085,30 @@ sim_printf ("%s\n", cptr);
 return SCPE_OK;
 }
 
+/* EchoF command */
+
+t_stat echof_cmd (int32 flag, CONST char *cptr)
+{
+char gbuf[CBUFSIZE];
+uint8 dbuf[CBUFSIZE];
+uint32 dsize = 0;
+
+GET_SWITCHES (cptr);
+if (!*cptr)
+    return SCPE_2FARG;
+if ((*cptr == '"') || (*cptr == '\'')) {
+    cptr = get_glyph_quoted (cptr, gbuf, 0);
+    if (*cptr != '\0')
+        return SCPE_2MARG;              /* No more arguments */
+    if (SCPE_OK != sim_decode_quoted_string (gbuf, dbuf, &dsize))
+        return sim_messagef (SCPE_ARG, "Invalid String\n");
+    dbuf[dsize] = 0;
+    cptr = (char *)dbuf;
+    }
+sim_printf ("%s%s", cptr, (sim_switches & SWMASK('N')) ? "" : "\n");
+return SCPE_OK;
+}
+
 /* Do command
 
    Syntax: DO {-E} {-V} <filename> {<arguments>...}
@@ -3057,7 +3208,7 @@ if (flag >= 0) {                                        /* Only bump nesting fro
     ++sim_do_depth;
     if (sim_on_inherit) {                               /* inherit ON condition actions? */
         sim_on_check[sim_do_depth] = sim_on_check[sim_do_depth-1]; /* inherit On mode */
-        for (i=0; i<SCPE_MAX_ERR; i++) {                /* replicate any on commands */
+        for (i=0; i<=SCPE_MAX_ERR; i++) {               /* replicate appropriate on commands */
             if (sim_on_actions[sim_do_depth-1][i]) {
                 sim_on_actions[sim_do_depth][i] = (char *)malloc(1+strlen(sim_on_actions[sim_do_depth-1][i]));
                 if (NULL == sim_on_actions[sim_do_depth][i]) {
@@ -3096,6 +3247,14 @@ if (errabort)                                           /* -e flag? */
     set_on (1, NULL);                                   /* equivalent to ON ERROR RETURN */
 
 do {
+    if (stop_cpu) {                                     /* SIGINT? */
+        if (sim_on_actions[sim_do_depth][ON_SIGINT_ACTION]) {
+            stop_cpu = FALSE;
+            sim_brk_setact (sim_on_actions[sim_do_depth][ON_SIGINT_ACTION]);/* Use specified action */
+            }
+        else
+            break;                                      /* Exit this command procedure */
+        }
     sim_do_ocptr[sim_do_depth] = cptr = sim_brk_getact (cbuf, sizeof(cbuf)); /* get bkpt action */
     if (!sim_do_ocptr[sim_do_depth]) {                  /* no pending action? */
         sim_do_ocptr[sim_do_depth] = cptr = read_line (cbuf, sizeof(cbuf), fpin);/* get cmd line */
@@ -3132,7 +3291,8 @@ do {
             else
                 stat = cmdp->action (cmdp->arg, cptr);  /* exec other cmd */
         }
-    else stat = SCPE_UNK;                               /* bad cmd given */
+    else
+        stat = SCPE_UNK;                                /* bad cmd given */
     echo = sim_do_echo;                                 /* Allow for SET VERIFY */
     stat_nomessage = stat & SCPE_NOMESSAGE;             /* extract possible message supression flag */
     stat_nomessage = stat_nomessage || (!sim_show_message);/* Apply global suppression */
@@ -3141,7 +3301,9 @@ do {
         ((cmdp->action != &return_cmd) &&
          (cmdp->action != &goto_cmd) &&
          (cmdp->action != &on_cmd) &&
-         (cmdp->action != &echo_cmd)))
+         (cmdp->action != &echo_cmd) &&
+         (cmdp->action != &echof_cmd) &&
+         (cmdp->action != &sleep_cmd)))
         sim_last_cmd_stat = stat;                       /* save command error status */
     switch (stat) {
         case SCPE_AFAIL:
@@ -3196,7 +3358,7 @@ if (flag >= 0) {
     sim_quiet = saved_sim_quiet;                        /* restore quiet mode we entered with */
     }
 if ((flag >= 0) || (!sim_on_inherit)) {
-    for (i=0; i<SCPE_MAX_ERR; i++) {                    /* release any on commands */
+    for (i=0; i<=SCPE_MAX_ERR; i++) {                    /* release any on commands */
         free (sim_on_actions[sim_do_depth][i]);
         sim_on_actions[sim_do_depth][i] = NULL;
         }
@@ -3285,6 +3447,26 @@ strlcpy (sim_sub_instr, instr, instr_size*sizeof(*sim_sub_instr));
 while (sim_isspace (*ip)) {                                 /* skip leading spaces */
     sim_sub_instr_off[outstr_off++] = ip - instr;
     *op++ = *ip++;
+    }
+/* If entire string is within quotes, strip the quotes */
+if ((*ip == '"') || (*ip == '\'')) {                        /* start with a quote character? */
+    const char *cptr = ip;
+    char *tp = op;              /* use remainder of output buffer as temp buffer */
+
+    cptr = get_glyph_quoted (cptr, tp, 0);                  /* get quoted string */
+    while (sim_isspace (*cptr))
+        ++cptr;                                             /* skip over trailing spaces */
+    if (*cptr == '\0') {                                    /* full string was quoted? */
+        uint32 dsize;
+
+        if (SCPE_OK == sim_decode_quoted_string (tp, (uint8 *)tp, &dsize)) {
+            tp[dsize] = '\0';
+            while (sim_isspace (*tp))
+                memmove (tp, tp + 1, strlen (tp));
+            strlcpy (ip, tp, instr_size - (ip - instr));/* copy quoted contents to input buffer */
+            strlcpy (sim_sub_instr + (ip -  instr), tp, instr_size - (ip - instr));
+            }
+        }
     }
 istart = ip;
 for (; *ip && (op < oend); ) {
@@ -3566,8 +3748,8 @@ return 1;
        <logical-op> and <conditional-op> are the same as that
        allowed for examine and deposit search specifications.
 
-   Syntax: ASSERT {-i} {NOT} "<string1>" <compare-op> "<string2>"
-   Syntax: IF {-i} {NOT} "<string1>" <compare-op> "<string2>" commandtoprocess{; additionalcommandtoprocess}...
+   Syntax: ASSERT {-i} {NOT} "<string1>"|EnvVarName1 <compare-op> "<string2>"|EnvVarName2
+   Syntax: IF {-i} {NOT} "<string1>"|EnvVarName1 <compare-op> "<string2>"|EnvVarName2 commandtoprocess{; additionalcommandtoprocess}...
 
        If -i is specified, the comparisons are done in a case insensitive manner.
        If NOT is specified, the resulting expression value is inverted.
@@ -3587,6 +3769,28 @@ return 1;
             >=  - greater than or equal
             GEQ - greater than or equal
 */
+static CONST char *_get_string (CONST char *iptr, char *optr, char mchar)
+{
+const char *ap;
+CONST char *tptr, *gptr;
+REG *rptr;
+
+tptr = (CONST char *)get_glyph_gen (iptr, optr, mchar, (sim_switches & SWMASK ('I')), TRUE, '\\');
+if (*optr != '"') {
+    ap = getenv (optr);
+    if (!ap)
+        return tptr;
+    /* for legacy ASSERT/IF behavior give precidence to REGister names over Environment Variables */
+    get_glyph (optr, optr, 0);
+    rptr = find_reg (optr, &gptr, sim_dfdev);
+    if (rptr)
+        return tptr;
+    snprintf (optr, CBUFSIZE - 1, "\"%s\"", ap);
+    get_glyph_gen (optr, optr, 0, (sim_switches & SWMASK ('I')), TRUE, '\\');
+    }
+return tptr;
+}
+
 t_stat assert_cmd (int32 flag, CONST char *cptr)
 {
 char gbuf[CBUFSIZE], gbuf2[CBUFSIZE];
@@ -3615,7 +3819,8 @@ if (!strcmp (gbuf, "EXIST")) {                          /* File Exist Test? */
     Exist = TRUE;                                       /* remember that, and */
     cptr = (CONST char *)tptr;
     }
-if (Exist || (*cptr == '"')) {                          /* quoted string comparison? */
+tptr = _get_string (cptr, gbuf, ' ');                   /* get first string */
+if (Exist || (*gbuf == '"')) {                          /* quoted string comparison? */
     char op[CBUFSIZE];
     static struct {
         const char *op;
@@ -3633,37 +3838,36 @@ if (Exist || (*cptr == '"')) {                          /* quoted string compari
             {"<=",   0, -1, FALSE},
             {"LEQ",  0, -1, FALSE},
             {">",    1,  1, FALSE},
-            {"GTR",  1,      1, FALSE},
+            {"GTR",  1,  1, FALSE},
             {">=",   0,  1, FALSE},
             {"GEQ",  0,  1, FALSE},
             {NULL}};
 
-    tptr = (CONST char *)get_glyph_gen (cptr, gbuf, '=', (sim_switches & SWMASK ('I')), TRUE, '\\');
-                                                    /* get first string */
     if (!*tptr)
         return SCPE_2FARG;
-    cptr += strlen (gbuf);
+    cptr = tptr;
     while (sim_isspace (*cptr))                         /* skip spaces */
         ++cptr;
     if (!Exist) {
         get_glyph (cptr, op, '"');
         for (optr = compare_ops; optr->op; optr++)
-            if (0 == strcmp (op, optr->op))
+            if (0 == strncmp (op, optr->op, strlen (optr->op)))
                 break;
         if (!optr->op)
             return sim_messagef (SCPE_ARG, "Invalid operator: %s\n", op);
-        cptr += strlen (op);
-        while (sim_isspace (*cptr))                         /* skip spaces */
+        cptr += strlen (optr->op);
+        if ((!isspace (*cptr)) && isalpha (optr->op[strlen (optr->op) - 1]) && isalnum (*cptr))
+            return sim_messagef (SCPE_ARG, "Invalid operator: %s\n", op);
+        while (sim_isspace (*cptr))                     /* skip spaces */
             ++cptr;
-        cptr = (CONST char *)get_glyph_gen (cptr, gbuf2, 0, (sim_switches & SWMASK ('I')), TRUE, '\\');
-                                                            /* get second string */
-        if (*cptr) {                                        /* more? */
-            if (flag)                                       /* ASSERT has no more args */
+        cptr = _get_string (cptr, gbuf2, 0);            /* get second string */
+        if (*cptr) {                                    /* more? */
+            if (flag)                                   /* ASSERT has no more args */
                 return SCPE_2MARG;
             }
         else {
-            if (!flag)                                      
-                return SCPE_2FARG;                          /* IF needs actions! */
+            if (!flag)
+                return SCPE_2FARG;                      /* IF needs actions! */
             }
         result = sim_cmp_string (gbuf, gbuf2);
         result = ((result == optr->aval) || (result == optr->bval));
@@ -3698,7 +3902,7 @@ else {
             addr = sim_vm_parse_addr (sim_dfdev, gbuf, &gptr);
         else
             addr = (t_addr) strtotv (gbuf, &gptr, sim_dfdev ? sim_dfdev->dradix : sim_dflt_dev->dradix);
-        if (gbuf == gptr)                               /* error? */
+        if (gbuf == gptr)                               /* not register? */
             return SCPE_NXREG;
         }
     if (*gptr != 0)                                     /* more? must be search */
@@ -3924,7 +4128,7 @@ tptr = get_glyph (cptr, gbuf, ',');
 if (sim_isalpha(gbuf[0]) && (strchr (gbuf, ':'))) {
     r = tmxr_locate_line_expect (gbuf, &exp);
     if (r != SCPE_OK)
-        return r;
+        return sim_messagef (r, "No such active line: %s\n", gbuf);
     cptr = tptr;
     }
 else
@@ -3969,8 +4173,6 @@ t_stat sleep_cmd (int32 flag, CONST char *cptr)
 char *tptr;
 double wait;
 
-stop_cpu = 0;
-signal (SIGINT, int_handler);
 while (*cptr) {
     wait = strtod (cptr, &tptr);
     switch (*tptr) {
@@ -3998,7 +4200,6 @@ while (*cptr) {
             wait *= (24.0*60.0*60.0);
             break;
         default:
-            signal (SIGINT, SIG_DFL);                               /* cancel WRU */
             return sim_messagef (SCPE_ARG, "Invalid Sleep unit '%c'\n", *cptr);
         }
     wait *= 1000.0;                             /* Convert to Milliseconds */
@@ -4008,8 +4209,7 @@ while (*cptr) {
     if ((wait > 0.0) && (!stop_cpu))
         sim_os_ms_sleep ((unsigned)wait);
     }
-signal (SIGINT, SIG_DFL);                               /* cancel WRU */
-stop_cpu = 0;
+stop_cpu = FALSE;                   /* Clear in case sleep was interrupted */
 return SCPE_OK;
 }
 
@@ -4110,9 +4310,17 @@ cptr = get_glyph (cptr, gbuf, 0);
 if ('\0' == gbuf[0]) return SCPE_ARG;                   /* unspecified condition */
 if (0 == strcmp("ERROR", gbuf))
     cond = 0;
-else
-    if (SCPE_OK != sim_string_to_stat (gbuf, &cond))
-        return SCPE_ARG;
+else {
+    if (SCPE_OK != sim_string_to_stat (gbuf, &cond)) {
+        if ((MATCH_CMD (gbuf, "CONTROL_C") == 0) || 
+            (MATCH_CMD (gbuf, "SIGINT") == 0))
+            cond = ON_SIGINT_ACTION;                    /* Special case */
+        else
+            return sim_messagef (SCPE_ARG, "Invalid argument: %s\n", gbuf);
+        }
+    }
+if (cond == SCPE_OK)
+    return sim_messagef (SCPE_ARG, "Invalid argument: %s\n", gbuf);
 if ((NULL == cptr) || ('\0' == *cptr)) {                /* Empty Action */
     free(sim_on_actions[sim_do_depth][cond]);           /* Clear existing condition */
     sim_on_actions[sim_do_depth][cond] = NULL; }
@@ -4799,17 +5007,15 @@ const char *scale, *width;
 if (sim_switches & SWMASK ('B'))
     kval = 1024;
 mval = kval * kval;
-if (dptr->flags & DEV_SECTORS) {
-    kval = kval / 512;
-    mval = mval / 512;
-    }
+if (dptr->flags & DEV_SECTORS)
+    psize = psize * 512;
 if ((dptr->dwidth / dptr->aincr) > 8)
     width = "W";
 else 
     width = "B";
-if (uptr->capac < (kval * 10))
+if (psize < (kval * 10))
     scale = "";
-else if (uptr->capac < (mval * 10)) {
+else if (psize < (mval * 10)) {
     scale = "K";
     psize = psize / kval;
     }
@@ -5004,6 +5210,10 @@ if (flag) {
 #define S_xstr(a) S_str(a)
 #define S_str(a) #a
 fprintf (st, "%sgit commit id: %8.8s", flag ? "\n        " : "        ", S_xstr(SIM_GIT_COMMIT_ID));
+#if defined(SIM_GIT_COMMIT_TIME)
+if (flag)
+    fprintf (st, "%sgit commit time: %s", "\n        ", S_xstr(SIM_GIT_COMMIT_TIME));
+#endif
 #undef S_str
 #undef S_xstr
 #endif
@@ -5203,12 +5413,16 @@ for (lvl=sim_do_depth; lvl >= 0; --lvl) {
     fprintf(st, " is %s\n", (sim_on_check[lvl]) ? "enabled" : "disabled");
     for (i=1; i<SCPE_BASE; ++i) {
         if (sim_on_actions[lvl][i])
-            fprintf(st, "    on %5d    %s\n", i, sim_on_actions[lvl][i]); }
+            fprintf(st, "    on %6d    %s\n", i, sim_on_actions[lvl][i]); }
     for (i=SCPE_BASE; i<=SCPE_MAX_ERR; ++i) {
         if (sim_on_actions[lvl][i])
-            fprintf(st, "    on %-5s    %s\n", scp_errors[i-SCPE_BASE].code, sim_on_actions[lvl][i]); }
+            fprintf(st, "    on %-6s    %s\n", scp_errors[i-SCPE_BASE].code, sim_on_actions[lvl][i]); }
     if (sim_on_actions[lvl][0])
-        fprintf(st, "    on ERROR    %s\n", sim_on_actions[lvl][0]);
+        fprintf(st, "    on ERROR     %s\n", sim_on_actions[lvl][0]);
+    if (sim_on_actions[lvl][ON_SIGINT_ACTION]) {
+        fprintf(st, "CONTROL+C/SIGINT Handling:\n");
+        fprintf(st, "    on CONTROL_C %s\n", sim_on_actions[lvl][ON_SIGINT_ACTION]);
+        }
     fprintf(st, "\n");
     }
 if (sim_on_inherit)
@@ -5465,9 +5679,7 @@ if (dir) {
 #endif
     t_offset FileSize;
     char FileName[PATH_MAX + 1];
-#if defined (HAVE_FNMATCH)
-    char *MatchName = 1 + strrchr (cptr, '/');;
-#endif
+    const char *MatchName = 1 + strrchr (cptr, '/');;
     char *p_name;
     struct tm *local;
 #if defined (HAVE_GLOB)
@@ -5481,6 +5693,9 @@ if (dir) {
     while ((ent = readdir (dir))) {
 #if defined (HAVE_FNMATCH)
         if (fnmatch(MatchName, ent->d_name, 0))
+            continue;
+#else
+        if (strcmp(MatchName, ent->d_name) != 0)
             continue;
 #endif
         sprintf (FileName, "%s/%s", DirName, ent->d_name);
@@ -5728,6 +5943,25 @@ stat = sim_dir_scan (sname, sim_copy_entry, &copy_state);
 if ((stat == SCPE_OK) && (copy_state.count))
     return sim_messagef (SCPE_OK, "      %3d file(s) copied\n", copy_state.count);
 return copy_state.stat;
+}
+
+/* Debug command */
+
+t_stat debug_cmd (int32 flg, CONST char *cptr)
+{
+char gbuf[CBUFSIZE];
+CONST char *svptr;
+DEVICE *dptr;
+
+GET_SWITCHES (cptr);                                    /* get switches */
+cptr = get_glyph (svptr = cptr, gbuf, 0);               /* get next glyph */
+if ((dptr = find_dev (gbuf)))                           /* device match? */
+return set_dev_debug (dptr, NULL, flg, *cptr ? cptr : NULL);
+cptr = svptr;
+if (flg)
+    return sim_set_debon (0, cptr);
+else
+    return sim_set_deboff (0, cptr);
 }
 
 /* Breakpoint commands */
@@ -6017,6 +6251,8 @@ return scp_attach_unit (dptr, uptr, gbuf);              /* attach */
 
 t_stat scp_attach_unit (DEVICE *dptr, UNIT *uptr, const char *cptr)
 {
+if (uptr->flags & UNIT_DIS)                             /* disabled? */
+    return SCPE_UDIS;
 if (dptr->attach != NULL)                               /* device routine? */
     return dptr->attach (uptr, (CONST char *)cptr);     /* call it */
 return attach_unit (uptr, (CONST char *)cptr);          /* no, std routine */
@@ -6028,8 +6264,6 @@ t_stat attach_unit (UNIT *uptr, CONST char *cptr)
 {
 DEVICE *dptr;
 
-if (uptr->flags & UNIT_DIS)                             /* disabled? */
-    return SCPE_UDIS;
 if (!(uptr->flags & UNIT_ATTABLE))                      /* not attachable? */
     return SCPE_NOATT;
 if ((dptr = find_dev_from_unit (uptr)) == NULL)
@@ -6046,8 +6280,9 @@ if ((sim_switches & SWMASK ('R')) ||                    /* read only? */
     uptr->fileref = sim_fopen (cptr, "rb");             /* open rd only */
     if (uptr->fileref == NULL)                          /* open fail? */
         return attach_err (uptr, SCPE_OPENERR);         /* yes, error */
+    if (!(uptr->flags & UNIT_RO))
+        sim_messagef (SCPE_OK, "%s: unit is read only\n", sim_dname (dptr));
     uptr->flags = uptr->flags | UNIT_RO;                /* set rd only */
-    sim_messagef (SCPE_OK, "%s: unit is read only\n", sim_dname (dptr));
     }
 else {
     if (sim_switches & SWMASK ('N')) {                  /* new file only? */
@@ -6217,7 +6452,7 @@ if ((uptr->flags & UNIT_BUF) && (uptr->filebuf)) {
         }
     uptr->flags = uptr->flags & ~UNIT_BUF;
     }
-uptr->flags = uptr->flags & ~(UNIT_ATT | UNIT_RO);
+uptr->flags = uptr->flags & ~(UNIT_ATT | ((uptr->flags & UNIT_ROABLE) ? UNIT_RO : 0));
 free (uptr->filename);
 uptr->filename = NULL;
 if (fclose (uptr->fileref) == EOF)
@@ -7000,35 +7235,26 @@ for (i = 1; (dptr = sim_devices[i]) != NULL; i++) {     /* reposition all */
                 return sim_messagef (SCPE_IERR, "Can't seek to %u in %s for %s\n", (unsigned)uptr->pos, uptr->filename, sim_uname (uptr));
         }
     }
-stop_cpu = 0;
-sim_is_running = 1;                                     /* flag running */
-if ((r = sim_ttrun ()) != SCPE_OK) {                          /* set console mode */
-    sim_is_running = 0;                                 /* flag idle */
+if ((r = sim_ttrun ()) != SCPE_OK) {                    /* set console mode */
     sim_ttcmd ();
     return sim_messagef (SCPE_TTYERR, "sim_ttrun() returned: %s\n", sim_error_text (r));
     }
 if ((r = sim_check_console (30)) != SCPE_OK) {          /* check console, error? */
-    sim_is_running = 0;                                 /* flag idle */
     sim_ttcmd ();
     sim_messagef (r, "sim_check_console () returned: %s\n", sim_error_text (r));
     }
-if (signal (SIGINT, int_handler) == SIG_ERR) {          /* set WRU */
-    sim_is_running = 0;                                 /* flag idle */
-    sim_ttcmd ();
-    return sim_messagef (SCPE_SIGERR, "Can't establish SIGINT");
-    }
 #ifdef SIGHUP
 if (signal (SIGHUP, int_handler) == SIG_ERR) {          /* set WRU */
-    sim_is_running = 0;                                 /* flag idle */
     sim_ttcmd ();
     return sim_messagef (SCPE_SIGERR, "Can't establish SIGHUP");
     }
 #endif
 if (signal (SIGTERM, int_handler) == SIG_ERR) {         /* set WRU */
-    sim_is_running = 0;                                 /* flag idle */
     sim_ttcmd ();
     return sim_messagef (SCPE_SIGERR, "Can't establish SIGTERM");
     }
+stop_cpu = FALSE;
+sim_is_running = TRUE;                                  /* flag running */
 if (sim_step)                                           /* set step timer */
     sim_activate (&sim_step_unit, sim_step);
 fflush(stdout);                                         /* flush stdout */
@@ -7077,15 +7303,18 @@ do {
         }
     else
         sim_step = 1;
-    if (sim_step)                                           /* set step timer */
+    if (sim_step)                                       /* set step timer */
         sim_activate (&sim_step_unit, sim_step);
     } while (1);
 
-sim_is_running = 0;                                     /* flag idle */
+if ((SCPE_BARE_STATUS(r) == SCPE_STOP) &&               /* WRU exit from sim_instr() */
+    (sim_on_actions[sim_do_depth][SCPE_STOP] == NULL) &&/* without a handler for a STOP condition */
+    (sim_on_actions[sim_do_depth][0] == NULL))
+    sim_os_ms_sleep (sim_stop_sleep_ms);                /* wait a bit for SIGINT */
+sim_is_running = FALSE;                                 /* flag idle */
 sim_stop_timer_services ();                             /* disable wall clock timing */
 sim_ttcmd ();                                           /* restore console */
 sim_brk_clrall (BRK_TYP_DYN_STEPOVER);                  /* cancel any step/over subroutine breakpoints */
-signal (SIGINT, SIG_DFL);                               /* cancel WRU */
 #ifdef SIGHUP
 signal (SIGHUP, SIG_DFL);                               /* cancel WRU */
 #endif
@@ -7143,16 +7372,14 @@ if (sim_deb && (sim_deb != stdout) && (sim_deb != sim_log)) {/* debug if enabled
 
 t_stat sim_run_boot_prep (int32 flag)
 {
-UNIT *uptr;
 t_stat r;
 
 sim_interval = 0;                                       /* reset queue */
 sim_time = sim_rtime = 0;
-noqueue_time = 0;
-for (uptr = sim_clock_queue; uptr != QUEUE_LIST_END; uptr = sim_clock_queue) {
-    sim_clock_queue = uptr->next;
-    uptr->next = NULL;
-    }
+noqueue_time = 0;                                       /* reset queue */
+while (sim_clock_queue != QUEUE_LIST_END)
+    sim_cancel (sim_clock_queue);
+noqueue_time = sim_interval = 0;
 r = reset_all (0);
 if ((r == SCPE_OK) && (flag == RU_RUN)) {
     if ((run_cmd_did_reset) && (0 == (sim_switches & SWMASK ('Q')))) {
@@ -7249,7 +7476,7 @@ return sim_cancel (&sim_step_unit);
 
 void int_handler (int sig)
 {
-stop_cpu = 1;
+stop_cpu = TRUE;
 return;
 }
 
@@ -7659,7 +7886,6 @@ void put_rval (REG *rptr, uint32 idx, t_value val)
 {
 size_t sz;
 t_value mask;
-t_value old_val;
 uint32 *ptr;
 
 #define PUT_RVAL(sz,rp,id,v,m) \
@@ -7667,8 +7893,6 @@ uint32 *ptr;
             (sz)((*(((sz *) rp->loc) + id) & \
             ~((m) << (rp)->offset)) | ((v) << (rp)->offset))
 
-if (rptr->write_callback)
-    old_val = get_rval (rptr, idx);
 if (rptr == sim_PC)
     sim_brk_npc (0);
 sz = SZ_R (rptr);
@@ -7721,9 +7945,6 @@ else PUT_RVAL (t_uint64, rptr, idx, val, mask);
 #else
 else PUT_RVAL (uint32, rptr, idx, val, mask);
 #endif
-if ((rptr->write_callback) && (!(sim_switches & SIM_SW_REST)))
-    rptr->write_callback (old_val, rptr, idx);
-return;
 }
 
 /* Examine address routine
@@ -8088,9 +8309,10 @@ static const char *get_glyph_gen (const char *iptr, char *optr, char mchar, t_bo
 {
 t_bool quoting = FALSE;
 t_bool escaping = FALSE;
+t_bool got_quoted = FALSE;
 char quote_char = 0;
 
-while ((*iptr != 0) && 
+while ((*iptr != 0) && (!got_quoted) &&
        ((quote && quoting) || ((sim_isspace (*iptr) == 0) && (*iptr != mchar)))) {
     if (quote) {
         if (quoting) {
@@ -8098,8 +8320,10 @@ while ((*iptr != 0) &&
                 if (*iptr == escape_char)
                     escaping = TRUE;
                 else
-                    if (*iptr == quote_char)
+                    if (*iptr == quote_char) {
                         quoting = FALSE;
+                        got_quoted = TRUE;
+                        }
                 }
             else
                 escaping = FALSE;
@@ -8374,7 +8598,7 @@ CONST char *tptr;
 
 *status = SCPE_OK;
 val = strtotv ((CONST char *)cptr, &tptr, radix);
-if ((cptr == tptr) || ((max > 0) && (val > max)))
+if ((cptr == tptr) || (val > max))
     *status = SCPE_ARG;
 else {
     while (sim_isspace (*tptr)) tptr++;
@@ -9653,8 +9877,10 @@ t_stat sim_process_event (void)
 UNIT *uptr;
 t_stat reason;
 
-if (stop_cpu)                                           /* stop CPU? */
+if (stop_cpu) {                                         /* stop CPU? */
+    stop_cpu = 0;
     return SCPE_STOP;
+    }
 AIO_UPDATE_QUEUE;
 UPDATE_SIM_TIME;                                        /* update sim time */
 
@@ -9696,8 +9922,10 @@ if (sim_clock_queue == QUEUE_LIST_END) {                /* queue empty? */
 else
     sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Processing Queue Complete New Interval = %d(%s)\n", sim_interval, sim_uname(sim_clock_queue));
 
-if ((reason == SCPE_OK) && stop_cpu)
+if ((reason == SCPE_OK) && stop_cpu) {
+    stop_cpu = FALSE;
     reason = SCPE_STOP;
+    }
 sim_processing_event = FALSE;
 return reason;
 }
@@ -9882,6 +10110,7 @@ if (nptr != QUEUE_LIST_END)
     nptr->time += (uptr->next) ? 0 : uptr->time;
 if (!uptr->next)
     uptr->time = 0;
+uptr->usecs_remaining = 0;
 if (sim_clock_queue != QUEUE_LIST_END)
     sim_interval = sim_clock_queue->time;
 else sim_interval = noqueue_time = NOQUEUE_WAIT;
@@ -10417,7 +10646,19 @@ while (sim_isspace (*sim_brk_act[sim_do_depth]))        /* skip spaces */
 if (*sim_brk_act[sim_do_depth] == 0) {                  /* now empty? */
     return sim_brk_clract ();
     }
-if ((ep = strchr (sim_brk_act[sim_do_depth], ';'))) {   /* cmd delimiter? */
+ep = strpbrk (sim_brk_act[sim_do_depth], ";\"'");       /* search for a semicolon or single or double quote */
+if ((ep != NULL) && (*ep != ';')) {                     /* if a quoted string is present */
+    char quote = *ep++;                                 /*   then save the opening quotation mark */
+
+    while (ep [0] != '\0' && ep [0] != quote)           /* while characters remain within the quotes */
+        if (ep [0] == '\\' && ep [1] == quote)          /*   if an escaped quote sequence follows */
+            ep = ep + 2;                                /*     then skip over the pair */
+        else                                            /*   otherwise */
+            ep = ep + 1;                                /*     skip the non-quote character */  
+    ep = strchr (ep, ';');                              /* the next semicolon is outside the quotes if it exists */
+    }
+
+if (ep != NULL) {                                       /* if a semicolon is present */
     lnt = ep - sim_brk_act[sim_do_depth];               /* cmd length */
     memcpy (buf, sim_brk_act[sim_do_depth], lnt + 1);   /* copy with ; */
     buf[lnt] = 0;                                       /* erase ; */
@@ -10449,6 +10690,14 @@ if (action) {
     }
 else
     sim_brk_clract ();
+}
+
+char *sim_brk_replace_act (char *new_action)
+{
+char *old_action = sim_brk_act_buf[sim_do_depth];
+
+sim_brk_act_buf[sim_do_depth] = new_action;
+return old_action;
 }
 
 /* New PC */
@@ -10773,7 +11022,8 @@ if (switches & EXP_TYP_REGEX) {
     }
 else {
     sim_data_trace(exp->dptr, exp->dptr->units, (const uint8 *)match, "", strlen(match)+1, "Expect Match String", exp->dbit);
-    sim_decode_quoted_string (match, match_buf, &match_size);
+    /* quoted string was validated above, this decode operation will always succeed */
+    (void)sim_decode_quoted_string (match, match_buf, &match_size);
     ep->match = match_buf;
     ep->size = match_size;
     }
@@ -11087,6 +11337,10 @@ return SCPE_OK;
 
 t_stat sim_show_send_input (FILE *st, const SEND *snd)
 {
+const char *dev_name = tmxr_send_line_name (snd);
+uint32 delay = get_default_env_parameter (dev_name, "SIM_SEND_DELAY", SEND_DEFAULT_DELAY);
+uint32 after = get_default_env_parameter (dev_name, "SIM_SEND_AFTER", delay);
+
 fprintf (st, "%s\n", tmxr_send_line_name (snd));
 if (snd->extoff < snd->insoff) {
     fprintf (st, "  %d bytes of pending input Data:\n    ", snd->insoff-snd->extoff);
@@ -11106,6 +11360,10 @@ if ((snd->delay > (sim_timer_inst_per_sec()/1000000.0)) && ((sim_timer_inst_per_
     fprintf (st, "  Minimum of %d instructions (%d microseconds) between characters\n", (int)snd->delay, (int)(snd->delay/(sim_timer_inst_per_sec()/1000000.0)));
 else
     fprintf (st, "  Minimum of %d instructions between characters\n", (int)snd->delay);
+if (after)
+    fprintf (st, "  Default delay before first character input is %u instructions\n", after);
+if (delay)
+    fprintf (st, "  Default delay between character input is %u instructions\n", after);
 if (snd->dptr && (snd->dbit & snd->dptr->dctrl))
     fprintf (st, "  Send Debugging via: SET %s DEBUG%s%s\n", sim_dname(snd->dptr), snd->dptr->debflags ? "=" : "", snd->dptr->debflags ? get_dbg_verb (snd->dbit, snd->dptr) : "");
 return SCPE_OK;
@@ -11159,20 +11417,20 @@ int32 cond;
 cptr = get_glyph (cptr, gbuf, 0);
 if (0 == memcmp("SCPE_", gbuf, 5))
     memmove (gbuf, gbuf+5, 1 + strlen (gbuf+5));/* skip leading SCPE_ */
-for (cond=0; cond < (SCPE_MAX_ERR-SCPE_BASE); cond++)
+for (cond=0; cond <= (SCPE_MAX_ERR-SCPE_BASE); cond++)
     if (0 == strcmp(scp_errors[cond].code, gbuf)) {
         cond += SCPE_BASE;
         break;
         }
 if (0 == strcmp(gbuf, "OK"))
     cond = SCPE_OK;
-if (cond == (SCPE_MAX_ERR-SCPE_BASE)) {       /* not found? */
+if (cond == (1+SCPE_MAX_ERR-SCPE_BASE)) {       /* not found? */
     if (0 == (cond = strtol(gbuf, NULL, 0)))  /* try explicit number */
         return SCPE_ARG;
     }
+*stat = cond;
 if (cond > SCPE_MAX_ERR)
     return SCPE_ARG;
-*stat = cond;
 return SCPE_OK;    
 }
 

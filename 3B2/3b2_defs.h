@@ -105,6 +105,7 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define STOP_EX             5     /* Exception */
 #define STOP_ESTK           6     /* Exception stack too deep */
 #define STOP_MMU            7     /* Unimplemented MMU Feature */
+#define STOP_POWER          8     /* System power-off */
 
 /* Exceptional conditions handled within the instruction loop */
 #define ABORT_EXC           1      /* CPU exception  */
@@ -123,14 +124,15 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define C_STACK_FAULT        9
 
 /* Debug flags */
-#define READ_MSG     0x01
-#define WRITE_MSG    0x02
-#define DECODE_MSG   0x04
-#define EXECUTE_MSG  0x08
-#define INIT_MSG     0x10
-#define IRQ_MSG      0x20
-#define IO_D_MSG     0x40
-#define TRACE_MSG    0x80
+#define READ_MSG     0x001
+#define WRITE_MSG    0x002
+#define DECODE_MSG   0x004
+#define EXECUTE_MSG  0x008
+#define INIT_MSG     0x010
+#define IRQ_MSG      0x020
+#define IO_D_MSG     0x040
+#define TRACE_MSG    0x080
+#define ERR_MSG      0x100
 
 /* Data types operated on by instructions. NB: These integer values
    have meaning when decoding instructions, so this is not just an
@@ -292,13 +294,10 @@ noret __libc_longjmp (jmp_buf buf, int val);
 
 /* Timer definitions */
 
-#define TMR_CLK 0   /* The clock responsible for IPL 15 interrupts */
-#define TMR_TOD 1   /* The Time-of-Day clock */
+#define TMR_CLK   0         /* The clock responsible for IPL 15 interrupts */
+#define TPS_CLK   100       /* 100 ticks per second */
 
-#define CLK_MIN_TICKS 500    /* No fewer than 500 sim steps between ticks */
-
-#define TPS_CLK       100    /* 100 ticks per second */
-#define TPS_TOD       10     /* 10 ticks per second  */
+#define CLK_MIN_TICKS 500   /* No fewer than 500 sim steps between ticks */
 
 
 /* TIMING SECTION                                  */
@@ -306,7 +305,7 @@ noret __libc_longjmp (jmp_buf buf, int val);
 /* Calculate delays (in simulator steps) for times */
 /* System clock runs at 10MHz; 100ns period.       */
 
-#define US_PER_INST         1.0
+#define US_PER_INST         1.6
 
 #define INST_PER_MS         (1000.0 / US_PER_INST)
 
@@ -335,6 +334,9 @@ extern DEVICE dmac_dev;
 /* global symbols from the CSR */
 extern uint16 csr_data;
 
+/* global symbols from the timer */
+extern int32 tmxr_poll;
+
 /* global symbols from the IU */
 extern t_bool iu_increment_a;
 extern t_bool iu_increment_b;
@@ -342,7 +344,6 @@ extern void increment_modep_a();
 extern void increment_modep_b();
 
 /* global symbols from the MMU */
-extern t_bool mmu_enabled();
 extern void mmu_enable();
 extern void mmu_disable();
 extern uint8 read_b(uint32 va, uint8 acc);

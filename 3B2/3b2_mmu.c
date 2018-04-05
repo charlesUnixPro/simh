@@ -681,7 +681,7 @@ t_stat mmu_decode_va(uint32 va, uint8 r_acc, t_bool fc, uint32 *pa)
     uint8 pd_acc;
     t_stat sd_cached, pd_cached;
 
-    if (!mmu_enabled()) {
+    if (!mmu_state.enabled) {
         *pa = va;
         return SCPE_OK;
     }
@@ -764,7 +764,7 @@ t_stat examine(uint32 va, uint8 *val) {
     succ = mmu_decode_va(va, 0, FALSE, &pa);
 
     if (succ == SCPE_OK) {
-        if (addr_is_rom(pa) || addr_is_io(pa) || addr_is_mem(pa)) {
+        if (addr_is_rom(pa) || addr_is_mem(pa)) {
             *val = pread_b(pa);
             return SCPE_OK;
         } else {
@@ -784,7 +784,7 @@ t_stat deposit(uint32 va, uint8 val) {
     succ = mmu_decode_va(va, 0, FALSE, &pa);
 
     if (succ == SCPE_OK) {
-        if (addr_is_mem(pa) || addr_is_io(pa)) {
+        if (addr_is_mem(pa)) {
             pwrite_b(pa, val);
             return SCPE_OK;
         } else {
@@ -824,11 +824,6 @@ uint32 mmu_xlate_addr(uint32 va, uint8 r_acc)
         cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
         return 0;
     }
-}
-
-SIM_INLINE t_bool mmu_enabled()
-{
-    return mmu_state.enabled;
 }
 
 void mmu_enable()

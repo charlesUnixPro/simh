@@ -68,13 +68,9 @@ extern uint16 csr_data;
 uint32 R[16];
 
 /* Other global CPU state */
-int8   cpu_dtype      = -1;        /* Default datatype for the current
-                                      instruction */
-int8   cpu_etype      = -1;        /* Currently set expanded datatype */
-
 t_bool cpu_nmi        = FALSE;     /* If set, there has been an NMI */
 
-uint8  cpu_ilen       = 0;         /* Length (in bytes) of instruction
+int32  pc_incr        = 0;         /* Length (in bytes) of instruction
                                      currently being executed */
 t_bool cpu_ex_halt    = FALSE;     /* Flag to halt on exceptions /
                                       traps */
@@ -133,6 +129,7 @@ static DEBTAB cpu_deb_tab[] = {
     { "IRQ",        IRQ_MSG,        "Interrupt Handling"    },
     { "IO",         IO_D_MSG,       "I/O Dispatch"          },
     { "TRACE",      TRACE_MSG,      "Call Trace"            },
+    { "ERROR",      ERR_MSG,        "Error"                 },
     { NULL,         0                                       }
 };
 
@@ -202,7 +199,7 @@ mnemonic hword_ops[HWORD_OP_COUNT] = {
 
 /* Lookup table of operand types. */
 mnemonic ops[256] = {
-    {0x00, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
+    {0x00,  0, OP_NONE, NA, "halt",   -1, -1, -1, -1},
     {0x01, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x02,  2, OP_COPR, WD, "SPOPRD", -1, -1, -1, -1},
     {0x03,  3, OP_COPR, WD, "SPOPD2", -1, -1, -1, -1},
@@ -570,12 +567,13 @@ t_stat cpu_ex(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
         *vptr = value;
         return succ;
     } else {
-        if (!(addr_is_rom(uaddr) || addr_is_mem(uaddr) || addr_is_io(uaddr))) {
+        if (addr_is_rom(uaddr) || addr_is_mem(uaddr)) {
+            *vptr = (uint32) pread_b(uaddr);
+            return SCPE_OK;
+        } else {
             *vptr = 0;
             return SCPE_NXM;
         }
-        *vptr = (uint32) pread_b(uaddr);
-        return SCPE_OK;
     }
 }
 
@@ -586,11 +584,12 @@ t_stat cpu_dep(t_value val, t_addr addr, UNIT *uptr, int32 sw)
     if (sw & EX_V_FLAG) {
         return deposit(uaddr, (uint8) val);
     } else {
-        if (!(addr_is_rom(uaddr) || addr_is_mem(uaddr) || addr_is_io(uaddr))) {
+        if (addr_is_mem(uaddr)) {
+            pwrite_b(uaddr, (uint8) val);
+            return SCPE_OK;
+        } else {
             return SCPE_NXM;
         }
-        pwrite_b(uaddr, (uint8) val);
-        return SCPE_OK;
     }
 }
 
@@ -724,7 +723,196 @@ t_stat cpu_set_hist(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
     return SCPE_OK;
 }
 
-void fprint_sym_m(FILE *st, instr *ip)
+t_stat fprint_sym_m(FILE *of, t_addr addr, t_value *val)
+{
+    uint8 desc, mode, reg, etype;
+    uint32 w;
+    int32 vp, inst, i;
+    mnemonic *mn;
+    char reg_name[8];
+
+    mn = NULL;
+    vp = 0;
+    etype = -1;
+
+    inst = (int32) val[vp++];
+
+    if (inst == 0x30) {
+        /* Scan to find opcode */
+        inst = 0x3000 | (int8) val[vp++];
+        for (i = 0; i < HWORD_OP_COUNT; i++) {
+            if (hword_ops[i].opcode == inst) {
+                mn = &hword_ops[i];
+                break;
+            }
+        }
+    } else {
+        mn = &ops[inst];
+    }
+
+    if (mn == NULL) {
+        fprintf(of, "???");
+        return -(vp - 1);
+    }
+
+    fprintf(of, "%s", mn->mnemonic);
+
+    for (i = 0; i < mn->op_count; i++) {
+
+        /* Special cases for non-descriptor opcodes */
+        if (mn->mode == OP_BYTE) {
+            mode = 6;
+            reg = 15;
+        } else if (mn->mode == OP_HALF) {
+            mode = 5;
+            reg = 15;
+        } else if (mn->mode == OP_COPR) {
+            mode = 4;
+            reg = 15;
+        } else {
+            desc = (uint8) val[vp++];
+            mode = (desc >> 4) & 0xf;
+            reg = desc & 0xf;
+
+            /* Find the expanded data type, if any */
+            if (mode == 14 &&
+                (reg == 0 || reg == 2 || reg == 3 ||
+                 reg == 4 || reg == 6 || reg == 7)) {
+                etype = reg;
+                /* The real descriptor byte lies one ahead */
+                desc = (uint8) val[vp++];
+                mode = (desc >> 4) & 0xf;
+                reg = desc & 0xf;
+            }
+        }
+
+        fputc(i ? ',' : ' ', of);
+
+        switch (etype) {
+        case 0:
+            fprintf(of, "{uword}");
+            break;
+        case 2:
+            fprintf(of, "{uhalf}");
+            break;
+        case 3:
+            fprintf(of, "{ubyte}");
+            break;
+        case 4:
+            fprintf(of, "{word}");
+            break;
+        case 6:
+            fprintf(of, "{half}");
+            break;
+        case 7:
+            fprintf(of, "{sbyte}");
+            break;
+        default:
+            /* do nothing */
+            break;
+        }
+
+        switch(mode) {
+        case 0:  /* Positive Literal */
+        case 1:  /* Positive Literal */
+        case 2:  /* Positive Literal */
+        case 3:  /* Positive Literal */
+        case 15: /* Negative Literal */
+            fprintf(of, "&%d", desc);
+            break;
+        case 4:  /* Halfword Immediate, Register Mode */
+            switch (reg) {
+            case 15: /* Word Immediate */
+                OP_R_W(w, val, vp);
+                fprintf(of, "&0x%x", w);
+                break;
+            default: /* Register Mode */
+                cpu_register_name(reg, reg_name, 8);
+                fprintf(of, "%s", reg_name);
+                break;
+            }
+            break;
+        case 5:  /* Halfword Immediate, Register Deferred */
+            switch (reg) {
+            case 15:
+                OP_R_H(w, val, vp);
+                fprintf(of, "&0x%x", w);
+                break;
+            default:
+                cpu_register_name(reg, reg_name, 8);
+                fprintf(of, "(%s)", reg_name);
+                break;
+            }
+            break;
+        case 6:  /* Byte Immediate, FP Short Offset */
+            switch (reg) {
+            case 15:
+                OP_R_B(w, val, vp);
+                fprintf(of, "&0x%x", w);
+                break;
+            default:
+                fprintf(of, "%d(%%fp)", reg);
+                break;
+            }
+            break;
+        case 7:  /* Absolute, AP Short Offset */
+            switch (reg) {
+            case 15:
+                OP_R_W(w, val, vp);
+                fprintf(of, "$0x%x", w);
+                break;
+            default:
+                fprintf(of, "%d(%%ap)", reg);
+                break;
+            }
+            break;
+        case 8:   /* Word Displacement */
+            OP_R_W(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "0x%x(%s)", w, reg_name);
+            break;
+        case 9:   /* Word Displacement Deferred */
+            OP_R_W(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "*0x%x(%s)", w, reg_name);
+            break;
+        case 10:  /* Halfword Displacement */
+            OP_R_H(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "0x%x(%s)", w, reg_name);
+            break;
+        case 11:  /* Halfword Displacement Deferred */
+            OP_R_H(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "*0x%x(%s)", w, reg_name);
+            break;
+        case 12:  /* Byte Displacement */
+            OP_R_B(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "%d(%s)", w, reg_name);
+            break;
+        case 13:  /* Byte Displacement Deferred */
+            OP_R_B(w, val, vp);
+            cpu_register_name(reg, reg_name, 8);
+            fprintf(of, "*%d(%s)", w, reg_name);
+            break;
+        case 14:
+            if (reg == 15) {
+                OP_R_W(w, val, vp);
+                fprintf(of, "*$0x%x", w);
+            }
+            break;
+        default:
+            fprintf(of, "<?>");
+            break;
+        }
+    }
+
+
+    return -(vp - 1);
+}
+
+void fprint_sym_hist(FILE *st, instr *ip)
 {
     int32 i;
 
@@ -791,7 +979,7 @@ t_stat cpu_show_hist(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
             if (ip->mn == NULL || ip->mn->op_count < 0) {
                 fprintf(st, "???");
             } else {
-                fprint_sym_m(st, ip);
+                fprint_sym_hist(st, ip);
                 if (ip->mn->op_count > 0 && ip->mn->mode == OP_DESC) {
                     fprintf(st, "\n                            ");
                     for (j = 0; j < (uint32) ip->mn->op_count; j++) {
@@ -933,7 +1121,7 @@ void cpu_show_operand(FILE *st, operand *op)
         }
         break;
     case 15:
-        fprintf(st, "&%d", (int32)op->embedded.w);
+        fprintf(st, "&0x%x", (int32)op->embedded.w);
         break;
     }
 }
@@ -986,18 +1174,13 @@ static SIM_INLINE void clear_instruction(instr *inst)
 
 /*
  * Decode a single descriptor-defined operand from the instruction
- * stream. Returns the number of bytes consumed during decode.
+ * stream. Returns the number of bytes consumed during decode.type
  */
-static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
+static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number, int8 *etype)
 {
     uint8 desc;
     uint8 offset = 0;
     operand *oper = &instr->operands[op_number];
-
-    /* Set the default data type if none is already set */
-    if (cpu_dtype == -1) {
-        cpu_dtype = instr->mn->dtype;
-    }
 
     /* Read in the descriptor byte */
     desc = read_b(pa + offset++, ACC_OF);
@@ -1005,7 +1188,7 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
     oper->mode = (desc >> 4) & 0xf;
     oper->reg = desc & 0xf;
     oper->dtype = instr->mn->dtype;
-    oper->etype = cpu_etype;
+    oper->etype = *etype;
 
     switch (oper->mode) {
     case 0:  /* Positive Literal */
@@ -1013,7 +1196,7 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
     case 2:  /* Positive Literal */
     case 3:  /* Positive Literal */
     case 15: /* Negative literal */
-        oper->embedded.b = (uint8)desc;
+        oper->embedded.b = desc;
         oper->data = oper->embedded.b;
         break;
     case 4:  /* Word Immediate, Register Mode */
@@ -1107,9 +1290,9 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
         case 7: /* Expanded Datatype */
             /* Recursively decode the remainder of the operand after
                storing the expanded datatype */
-            cpu_etype = (int8) oper->reg;
-            oper->etype = cpu_etype;
-            offset += decode_operand(pa + offset, instr, op_number);
+            *etype = (int8) oper->reg;
+            oper->etype = *etype;
+            offset += decode_operand(pa + offset, instr, op_number, etype);
             break;
         default:
             cpu_abort(NORMAL_EXCEPTION, RESERVED_DATATYPE);
@@ -1131,9 +1314,9 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number)
  *      the opcode type.
  *   3. Fetch each opcode from main memory.
  *
- * This routine may alter the PSW's ET (Exception Type) and
- * ISC (Internal State Code) registers if an exceptional condition
- * is encountered during decode.
+ * This routine is guaranteed not to change state.
+ *
+ * returns: a Normal Exception if an error occured, or 0 on success.
  */
 uint8 decode_instruction(instr *instr)
 {
@@ -1143,6 +1326,9 @@ uint8 decode_instruction(instr *instr)
     uint32 pa;
     mnemonic *mn = NULL;
     int i;
+    int8 etype = -1;  /* Expanded datatype (if any) */
+
+    clear_instruction(instr);
 
     pa = R[NUM_PC];
 
@@ -1150,10 +1336,6 @@ uint8 decode_instruction(instr *instr)
     instr->psw = R[NUM_PSW];
     instr->sp  = R[NUM_SP];
     instr->pc  = pa;
-
-    /* Reset our data types */
-    cpu_etype = -1;
-    cpu_dtype = -1;
 
     if (read_operand(pa + offset++, &b1) != SCPE_OK) {
         /* We tried to read out of a page that doesn't exist. We
@@ -1219,13 +1401,13 @@ uint8 decode_instruction(instr *instr)
 
         /* Decode subsequent operands */
         for (i = 1; i < mn->op_count; i++) {
-            offset += decode_operand(pa + offset, instr, (uint8) i);
+            offset += decode_operand(pa + offset, instr, (uint8) i, &etype);
         }
 
         break;
     case OP_DESC:
         for (i = 0; i < mn->op_count; i++) {
-            offset += decode_operand(pa + offset, instr, (uint8) i);
+            offset += decode_operand(pa + offset, instr, (uint8) i, &etype);
         }
         break;
     }
@@ -1314,10 +1496,6 @@ t_bool cpu_on_interrupt(uint8 ipl)
     uint32 new_pcbp;
     uint16 id = ipl; /* TODO: Does this need to be uint16? */
 
-    sim_debug(IRQ_MSG, &cpu_dev,
-              "[%08x] [cpu_on_interrupt] ipl=%d\n",
-              R[NUM_PC], ipl);
-
     /*
      * "If a nonmaskable interrupt request is received, an auto-vector
      * interrupt acknowledge cycle is performed (as if an autovector
@@ -1330,7 +1508,7 @@ t_bool cpu_on_interrupt(uint8 ipl)
 
     cpu_km = TRUE;
 
-    if ((R[NUM_PSW] & PSW_QIE_MASK) >> PSW_QIE) {
+    if (R[NUM_PSW] & PSW_QIE_MASK) {
         /* TODO: Maybe implement quick interrupts at some point, but
            the 3B2 ROM and SVR3 don't appear to use them. */
         assert(0);
@@ -1363,7 +1541,7 @@ t_bool cpu_on_interrupt(uint8 ipl)
 
 t_stat sim_instr(void)
 {
-    uint8 et, isc;
+    uint8 et, isc, trap;
 
     /* Temporary register used for overflow detection */
     t_uint64 result;
@@ -1373,7 +1551,7 @@ t_stat sim_instr(void)
 
     /* Used for field calculation */
     uint32   width, offset;
-    t_uint64 mask;
+    uint32   mask;
 
     operand *src1, *src2, *src3, *dst;
 
@@ -1396,10 +1574,10 @@ t_stat sim_instr(void)
             return STOP_EX;
         }
 
-        if (abort_reason == ABORT_EXC) {
-            et  = R[NUM_PSW] & PSW_ET_MASK;
-            isc = (R[NUM_PSW] & PSW_ISC_MASK) >> PSW_ISC;
+        et  = R[NUM_PSW] & PSW_ET_MASK;
+        isc = (R[NUM_PSW] & PSW_ISC_MASK) >> PSW_ISC;
 
+        if (abort_reason == ABORT_EXC) {
             switch(abort_context) {
             case C_NORMAL_GATE_VECTOR:
                 cpu_on_normal_exception(N_GATE_VECTOR);
@@ -1442,13 +1620,12 @@ t_stat sim_instr(void)
                 }
                 break;
             }
-        } else {
-            /* TODO: Handle traps */
-            stop_reason = STOP_EX;
         }
+        /* Traps are handled at the end of instruction execution */
     }
 
     while (stop_reason == 0) {
+        trap = 0;
         abort_context = C_NONE;
 
         if (sim_brk_summ && sim_brk_test(R[NUM_PC], SWMASK ('E'))) {
@@ -1468,7 +1645,6 @@ t_stat sim_instr(void)
 
         /* Process DMA requests */
         dmac_service_drqs();
-
 
         /*
          * Post-increment IU mode pointers (if needed).
@@ -1490,7 +1666,6 @@ t_stat sim_instr(void)
             cpu_on_interrupt(cpu_ipl());
             cpu_nmi = FALSE;
             cpu_in_wait = FALSE;
-            continue;
         }
 
         if (cpu_in_wait) {
@@ -1501,7 +1676,6 @@ t_stat sim_instr(void)
         }
 
         /* Reset the TM bits */
-        R[NUM_PSW] &= ~PSW_TM;
         R[NUM_PSW] |= PSW_TM_MASK;
 
         /* Record the instruction for history */
@@ -1513,8 +1687,7 @@ t_stat sim_instr(void)
         }
 
         /* Decode the instruction */
-        memset(cpu_instr, 0, sizeof(instr));
-        cpu_ilen = decode_instruction(cpu_instr);
+        pc_incr = decode_instruction(cpu_instr);
 
         /* Make sure to update the valid bit for history keeping (if
          * enabled) */
@@ -1590,63 +1763,53 @@ t_stat sim_instr(void)
         case BEH:
         case BEH_D:
             if (cpu_z_flag() == 1) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BEB:
         case BEB_D:
             if (cpu_z_flag() == 1) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case BGH:
             if ((cpu_n_flag() | cpu_z_flag()) == 0) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BGB:
             if ((cpu_n_flag() | cpu_z_flag()) == 0) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case BGEH:
             if ((cpu_n_flag() == 0) | (cpu_z_flag() == 1)) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BGEB:
             if ((cpu_n_flag() == 0) | (cpu_z_flag() == 1)) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case BGEUH:
             if (cpu_c_flag() == 0) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BGEUB:
             if (cpu_c_flag() == 0) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case BGUH:
             if ((cpu_c_flag() | cpu_z_flag()) == 0) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BGUB:
             if ((cpu_c_flag() | cpu_z_flag()) == 0) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case BITW:
@@ -1661,118 +1824,104 @@ t_stat sim_instr(void)
             break;
         case BLH:
             if ((cpu_n_flag() == 1) && (cpu_z_flag() == 0)) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BLB:
             if ((cpu_n_flag() == 1) && (cpu_z_flag() == 0)) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case BLEH:
             if ((cpu_n_flag() | cpu_z_flag()) == 1) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BLEB:
             if ((cpu_n_flag() | cpu_z_flag()) == 1) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case BLEUH:
             if ((cpu_c_flag() | cpu_z_flag()) == 1) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BLEUB:
             if ((cpu_c_flag() | cpu_z_flag()) == 1) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case BLUH:
             if (cpu_c_flag() == 1) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BLUB:
             if (cpu_c_flag() == 1) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case BNEH:
         case BNEH_D:
             if (cpu_z_flag() == 0) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BNEB:
         case BNEB_D:
             if (cpu_z_flag() == 0) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case BPT:
-            /* TODO: Confirm that a breakpoint trap will increment the
-               PC. Otherwise, change 'break' to 'continue' */
-            cpu_abort(NORMAL_EXCEPTION, BREAKPOINT_TRAP);
+        case HALT:
+            trap = BREAKPOINT_TRAP;
             break;
         case BRH:
-            R[NUM_PC] += sign_extend_h(dst->embedded.h);
-            continue;
+            pc_incr = sign_extend_h(dst->embedded.h);
+            break;
         case BRB:
-            R[NUM_PC] += sign_extend_b(dst->embedded.b);
-            continue;
+            pc_incr = sign_extend_b(dst->embedded.b);
+            break;
         case BSBH:
-            cpu_push_word(R[NUM_PC] + cpu_ilen);
-            R[NUM_PC] += sign_extend_h(dst->embedded.h);
-            continue;
+            cpu_push_word(R[NUM_PC] + pc_incr);
+            pc_incr = sign_extend_h(dst->embedded.h);
+            break;
         case BSBB:
-            cpu_push_word(R[NUM_PC] + cpu_ilen);
-            R[NUM_PC] += sign_extend_b(dst->embedded.b);
-            continue;
+            cpu_push_word(R[NUM_PC] + pc_incr);
+            pc_incr = sign_extend_b(dst->embedded.b);
+            break;
         case BVCH:
             if (cpu_v_flag() == 0) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BVCB:
             if (cpu_v_flag() == 0) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case BVSH:
             if (cpu_v_flag() == 1) {
-                R[NUM_PC] += sign_extend_h(dst->embedded.h);
-                continue;
+                pc_incr = sign_extend_h(dst->embedded.h);
             }
             break;
         case BVSB:
             if (cpu_v_flag() == 1) {
-                R[NUM_PC] += sign_extend_b(dst->embedded.b);
-                continue;
+                pc_incr = sign_extend_b(dst->embedded.b);
             }
             break;
         case CALL:
             a = cpu_effective_address(src1);
             b = cpu_effective_address(dst);
             write_w(R[NUM_SP] + 4, R[NUM_AP]);
-            write_w(R[NUM_SP], R[NUM_PC] + cpu_ilen);
+            write_w(R[NUM_SP], R[NUM_PC] + pc_incr);
             R[NUM_SP] += 8;
             R[NUM_PC] = b;
             R[NUM_AP] = a;
-            continue;
+            pc_incr = 0;
+            break;
         case CFLUSH:
             break;
         case CALLPS:
@@ -1808,7 +1957,8 @@ t_stat sim_instr(void)
             abort_context = C_NONE;
 
             cpu_km = FALSE;
-            continue;
+            pc_incr = 0;
+            break;
         case CLRW:
         case CLRH:
         case CLRB:
@@ -1975,7 +2125,8 @@ t_stat sim_instr(void)
             }
             mmu_enable();
             R[NUM_PC] = R[0];
-            continue;
+            pc_incr = 0;
+            break;
         case DISVJMP:
             if (cpu_execution_level() != EX_LVL_KERN) {
                 cpu_abort(NORMAL_EXCEPTION, PRIVILEGED_OPCODE);
@@ -1983,14 +2134,19 @@ t_stat sim_instr(void)
             }
             mmu_disable();
             R[NUM_PC] = R[0];
-            continue;
+            pc_incr = 0;
+            break;
         case EXTFW:
         case EXTFH:
         case EXTFB:
             width = (cpu_read_op(src1) & 0x1f) + 1;
             offset = cpu_read_op(src2) & 0x1f;
-            mask = (1ul << width) - 1;
-            mask = (mask << offset) & WORD_MASK;
+            if (width >= 32) {
+                mask = -1;
+            } else {
+                mask = (1ul << width) - 1;
+            }
+            mask = mask << offset;
 
             if (width + offset > 32) {
                 mask |= (1ul << ((width + offset) - 32)) - 1;
@@ -2016,7 +2172,11 @@ t_stat sim_instr(void)
         case INSFB:
             width = (cpu_read_op(src1) & 0x1f) + 1;
             offset = cpu_read_op(src2) & 0x1f;
-            mask = ((1ul << width) - 1) & WORD_MASK;
+            if (width >= 32) {
+                mask = -1;
+            } else {
+                mask = (1ul << width) - 1;
+            }
 
             a = cpu_read_op(src3) & mask; /* src */
             b = cpu_read_op(dst);         /* dst */
@@ -2031,27 +2191,21 @@ t_stat sim_instr(void)
             break;
         case JMP:
             R[NUM_PC] = cpu_effective_address(dst);
-            continue;
+            pc_incr = 0;
+            break;
         case JSB:
-            cpu_push_word(R[NUM_PC] + cpu_ilen);
+            cpu_push_word(R[NUM_PC] + pc_incr);
             R[NUM_PC] = cpu_effective_address(dst);
-            continue;
+            pc_incr = 0;
+            break;
         case LLSW3:
-            result = cpu_read_op(src2) << (cpu_read_op(src1) & 0x1f);
-            cpu_write_op(dst, (uint32)(result & WORD_MASK));
-            cpu_set_nz_flags((uint32)(result & WORD_MASK), dst);
-            break;
         case LLSH3:
-            a = cpu_read_op(src2) << (cpu_read_op(src1) & 0x1f);
-            cpu_write_op(dst, a);
-            cpu_set_nz_flags(a, dst);
-            break;
         case LLSB3:
-            a = cpu_read_op(src2) << (cpu_read_op(src1) & 0x1f);
-            cpu_write_op(dst, a);
-            cpu_set_nz_flags(a, dst);
+            result = (t_uint64)cpu_read_op(src2) << (cpu_read_op(src1) & 0x1f);
+            cpu_write_op(dst, result);
+            cpu_set_nz_flags(result, dst);
             cpu_set_c_flag(0);
-            cpu_set_v_flag_op(a, dst);
+            cpu_set_v_flag_op(result, dst);
             break;
         case ARSW3:
         case ARSH3:
@@ -2091,9 +2245,8 @@ t_stat sim_instr(void)
             break;
         case GATE:
             cpu_km = TRUE;
-            abort_context = C_PROCESS_GATE_PCB;
             if (R[NUM_SP] < read_w(R[NUM_PCBP] + 12, ACC_AF) ||
-                R[NUM_SP] >= read_w(R[NUM_PCBP] + 16, ACC_AF)) {
+                R[NUM_SP] > read_w(R[NUM_PCBP] + 16, ACC_AF)) {
                 sim_debug(EXECUTE_MSG, &cpu_dev,
                           "[%08x] STACK OUT OF BOUNDS IN GATE. "
                           "SP=%08x, R[NUM_PCBP]+12=%08x, "
@@ -2127,10 +2280,11 @@ t_stat sim_instr(void)
 
             /* Finish push of PC and PSW */
             R[NUM_SP] += 8;
-            continue;
+            pc_incr = 0;
+            break;
         case MCOMW:
         case MCOMH:
-        case MCOMB:
+        case MCOMB: /* One's complement */
             a = ~(cpu_read_op(src1));
             cpu_write_op(dst, a);
             cpu_set_nz_flags(a, dst);
@@ -2139,7 +2293,7 @@ t_stat sim_instr(void)
             break;
         case MNEGW:
         case MNEGH:
-        case MNEGB:
+        case MNEGB: /* Two's complement */
             a = ~cpu_read_op(src1) + 1;
             cpu_write_op(dst, a);
             cpu_set_nz_flags(a, dst);
@@ -2171,7 +2325,7 @@ t_stat sim_instr(void)
             cpu_set_c_flag(0);
             break;
         case ROTW:
-            a = cpu_read_op(src1) & 31;
+            a = cpu_read_op(src1) & 0x1f;
             b = (uint32) cpu_read_op(src2);
             mask = (CHAR_BIT * sizeof(a) - 1);
             d = (b >> a) | (b << ((~a + 1) & mask));
@@ -2212,7 +2366,7 @@ t_stat sim_instr(void)
             /* However, if a move to PSW set the O bit, we have to
                generate an overflow exception trap */
             if (op_is_psw(dst) && (R[NUM_PSW] & PSW_OE_MASK)) {
-                cpu_abort(NORMAL_EXCEPTION, INTEGER_OVERFLOW);
+                trap = INTEGER_OVERFLOW;
             }
             break;
         case MODW2:
@@ -2339,10 +2493,10 @@ t_stat sim_instr(void)
         case NOP:
             break;
         case NOP2:
-            cpu_ilen += 1;
+            pc_incr += 1;
             break;
         case NOP3:
-            cpu_ilen += 2;
+            pc_incr += 2;
             break;
         case ORW2:
         case ORH2:
@@ -2391,26 +2545,26 @@ t_stat sim_instr(void)
         case RGEQ:
             if (cpu_n_flag() == 0 || cpu_z_flag() == 1) {
                 R[NUM_PC] = cpu_pop_word();
-                continue;
+                pc_incr = 0;
             }
             break;
         case RGEQU:
             if (cpu_c_flag() == 0) {
                 R[NUM_PC] = cpu_pop_word();
-                continue;
+                pc_incr = 0;
             }
             break;
         case RGTR:
             if ((cpu_n_flag() | cpu_z_flag()) == 0) {
                 R[NUM_PC] = cpu_pop_word();
-                continue;
+                pc_incr = 0;
             }
             break;
         case RNEQ:
         case RNEQU:
             if (cpu_z_flag() == 0) {
                 R[NUM_PC] = cpu_pop_word();
-                continue;
+                pc_incr = 0;
             }
             break;
         case RET:
@@ -2420,7 +2574,8 @@ t_stat sim_instr(void)
             R[NUM_AP] = b;
             R[NUM_PC] = c;
             R[NUM_SP] = a;
-            continue;
+            pc_incr = 0;
+            break;
         case RETG:
             abort_context = C_STACK_FAULT;
             a = read_w(R[NUM_SP] - 4, ACC_AF);   /* PSW */
@@ -2457,7 +2612,8 @@ t_stat sim_instr(void)
             R[NUM_PC] = b;
 
             R[NUM_SP] -= 8;
-            continue;
+            pc_incr = 0;
+            break;
         case RETPS:
             if (cpu_execution_level() != EX_LVL_KERN) {
                 cpu_abort(NORMAL_EXCEPTION, PRIVILEGED_OPCODE);
@@ -2504,12 +2660,21 @@ t_stat sim_instr(void)
 
             /* Un-force kernel memory access */
             cpu_km = FALSE;
-            continue;
+            pc_incr = 0;
+            break;
         case SPOP:
+        case SPOPD2:
+        case SPOPS2:
+        case SPOPT2:
         case SPOPRD:
         case SPOPRS:
+        case SPOPRT:
+        case SPOPWD:
+        case SPOPWS:
+        case SPOPWT:
             /* Memory fault is signaled when no support processor is
                active */
+            csr_data |= CSRTIMO;
             cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
             break;
         case SUBW2:
@@ -2542,36 +2707,37 @@ t_stat sim_instr(void)
         case RLEQ:
             if ((cpu_n_flag() | cpu_z_flag()) == 1) {
                 R[NUM_PC] = cpu_pop_word();
-                continue;
+                pc_incr = 0;
             }
             break;
         case RLEQU:
             if ((cpu_c_flag() | cpu_z_flag()) == 1) {
                 R[NUM_PC] = cpu_pop_word();
-                continue;
+                pc_incr = 0;
             }
             break;
         case RLSS:
             if ((cpu_n_flag() == 1) & (cpu_z_flag() == 0)) {
                 R[NUM_PC] = cpu_pop_word();
-                continue;
+                pc_incr = 0;
             }
             break;
         case REQL:
             if (cpu_z_flag() == 1) {
                 R[NUM_PC] = cpu_pop_word();
-                continue;
+                pc_incr = 0;
             }
             break;
         case REQLU:
             if (cpu_z_flag() == 1) {
                 R[NUM_PC] = cpu_pop_word();
-                continue;
+                pc_incr = 0;
             }
             break;
         case RSB:
             R[NUM_PC] = cpu_pop_word();
-            continue;
+            pc_incr = 0;
+            break;
         case SAVE:
             /* Save the FP register */
             write_w(R[NUM_SP], R[NUM_FP]);
@@ -2618,6 +2784,10 @@ t_stat sim_instr(void)
             cpu_set_v_flag(0);
             break;
         case WAIT:
+            if (cpu_execution_level() != EX_LVL_KERN) {
+                cpu_abort(NORMAL_EXCEPTION, PRIVILEGED_OPCODE);
+                break;
+            }
             cpu_in_wait = TRUE;
             break;
         case XORW2:
@@ -2644,7 +2814,21 @@ t_stat sim_instr(void)
         };
 
         /* Increment the PC appropriately */
-        R[NUM_PC] += cpu_ilen;
+        R[NUM_PC] += pc_incr;
+
+        /* If TE and TM are both set, generate a trace trap */
+        if ((R[NUM_PSW] & PSW_TE_MASK) && (R[NUM_PSW] & PSW_TM_MASK)) {
+            trap = TRACE_TRAP;
+        }
+
+        /* Handle traps */
+        if (trap) {
+            R[NUM_PSW] &= ~(PSW_ET_MASK);
+            R[NUM_PSW] &= ~(PSW_ISC_MASK);
+            R[NUM_PSW] |= NORMAL_EXCEPTION;
+            R[NUM_PSW] |= (uint32) (trap << PSW_ISC);
+            cpu_on_normal_exception(trap);
+        }
     }
 
     return stop_reason;
@@ -2653,6 +2837,9 @@ t_stat sim_instr(void)
 static SIM_INLINE void cpu_on_process_exception(uint8 isc)
 {
     /* TODO: Handle */
+    sim_debug(ERR_MSG, &cpu_dev,
+              "[%08x] CPU_ON_PROCESS_EXCEPTION not yet implemented.\n",
+              R[NUM_PC]);
     stop_reason = STOP_EX;
     return;
 }
@@ -2721,12 +2908,9 @@ static SIM_INLINE void cpu_on_normal_exception(uint8 isc)
               "[%08x] [cpu_on_normal_exception %d] %%sp=%08x abort_context=%d\n",
               R[NUM_PC], isc, R[NUM_SP], abort_context);
 
-    abort_context = C_PROCESS_GATE_PCB;
-
     cpu_km = TRUE;
-
     if (R[NUM_SP] < read_w(R[NUM_PCBP] + 12, ACC_AF) ||
-        R[NUM_SP] >= read_w(R[NUM_PCBP] + 16, ACC_AF)) {
+        R[NUM_SP] > read_w(R[NUM_PCBP] + 16, ACC_AF)) {
         sim_debug(EXECUTE_MSG, &cpu_dev,
                   "[%08x] STACK OUT OF BOUNDS IN EXCEPTION HANDLER. "
                   "SP=%08x, R[NUM_PCBP]+12=%08x, "
@@ -2735,21 +2919,20 @@ static SIM_INLINE void cpu_on_normal_exception(uint8 isc)
                   R[NUM_SP],
                   read_w(R[NUM_PCBP] + 12, ACC_AF),
                   read_w(R[NUM_PCBP] + 16, ACC_AF));
-        abort_context = C_NONE;
         cpu_abort(STACK_EXCEPTION, STACK_BOUND);
     }
-
     cpu_km = FALSE;
 
     /* Set context for STACK (FAULT) */
     abort_context = C_STACK_FAULT;
+    /* Save address of next instruction to stack */
     write_w(R[NUM_SP], R[NUM_PC]);
 
     /* Write 0, 3 to TM, ET fields of PSW */
     R[NUM_PSW] &= ~(PSW_TM_MASK|PSW_ET_MASK);
     R[NUM_PSW] |= (3 << PSW_ET);
 
-    /* Save address of next instruction and PSW to stack */
+    /* Save PSW to stack */
     write_w(R[NUM_SP] + 4, R[NUM_PSW]);
 
     /* Set context for RESET (GATE VECTOR) */
@@ -2857,7 +3040,7 @@ static uint32 cpu_effective_address(operand *op)
         return read_w(R[op->reg] + sign_extend_b(op->embedded.b), ACC_AF);
     }
 
-    assert(0);
+    stop_reason = STOP_OPCODE;
 
     return 0;
 }
@@ -3106,7 +3289,7 @@ static SIM_INLINE uint8 cpu_ipl()
     }
 
     /* CSRDISK is cleared when the floppy "if_irq" goes low */
-    if (id_irq || (csr_data & CSRDISK)) {
+    if (id_int() || (csr_data & CSRDISK)) {
         return 11;
     }
 
@@ -3397,11 +3580,13 @@ void cpu_abort(uint8 et, uint8 isc)
 {
     /* We don't trap Integer Overflow if the OE bit is not set */
     if ((R[NUM_PSW] & PSW_OE_MASK) || isc != INTEGER_OVERFLOW) {
-        R[NUM_PSW] &= ~(PSW_ISC_MASK); /* Clear ISC */
         R[NUM_PSW] &= ~(PSW_ET_MASK);  /* Clear ET  */
-        R[NUM_PSW] |= et;              /* Set ET    */
+        R[NUM_PSW] &= ~(PSW_ISC_MASK); /* Clear ISC */
+        R[NUM_PSW] |= et;                         /* Set ET    */
         R[NUM_PSW] |= (uint32) (isc << PSW_ISC);  /* Set ISC   */
 
+        /* TODO: We no longer use ABORT_TRAP or ABORT_EXC, so
+         * it would be nice to clean this up. */
         if (et == 3 && (isc == BREAKPOINT_TRAP ||
                         isc == INTEGER_OVERFLOW ||
                         isc == TRACE_TRAP)) {
